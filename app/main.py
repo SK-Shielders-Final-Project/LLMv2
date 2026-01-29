@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+
+from dotenv import load_dotenv
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -12,6 +14,8 @@ from app.service.registry import FunctionRegistry
 from app.schema import GenerateRequest, GenerateResponse, LlmMessage
 
 app = FastAPI(title="LLM Orchestrator API")
+
+load_dotenv()
 
 
 def create_orchestrator() -> Orchestrator:

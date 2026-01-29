@@ -4,3 +4,4 @@ uvicorn
 oracledb
 docker
 paramiko
+python-dotenv
