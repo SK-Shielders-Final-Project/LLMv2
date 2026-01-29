@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from types import SimpleNamespace
 from typing import Any
 
 from app.clients.llm_client import LlmClient
@@ -61,14 +62,16 @@ class Orchestrator:
         results: list[dict[str, Any]] = []
         tools_used: list[str] = []
 
+        ## 도구 실행 루프
         for call in tool_calls:
             args = self._parse_args(call.arguments)
             if call.name == "execute_in_sandbox":
-                code = args.get("code")
-                task = args.get("task")
-                if not code:
-                    code = self._build_fallback_sandbox_code(task=task, results=results)
-                code = self._inject_inputs(code=code, inputs=args.get("inputs"), results=results)
+                code = self._build_sandbox_code(
+                    code=args.get("code"),
+                    task=args.get("task"),
+                    inputs=args.get("inputs"),
+                    results=results,
+                )
                 self._validate_code(code)
                 sandbox_result = self.sandbox_client.run_code(
                     code=code,
@@ -77,7 +80,7 @@ class Orchestrator:
                 results.append({"tool": call.name, "result": sandbox_result})
                 tools_used.append(call.name)
                 continue
-
+            
             result = self.registry.execute(call.name, **args)
             results.append({"tool": call.name, "result": self._sanitize_payload(result)})
             tools_used.append(call.name)
@@ -129,53 +132,54 @@ class Orchestrator:
         for match in _TOOL_CODE_PATTERN.findall(content):
             stripped = match.strip()
             if stripped.startswith("["):
-                tool_calls.extend(self._parse_tool_list(stripped))
+                tool_calls.extend(self._parse_plan(stripped))
                 continue
             lines = [line.strip() for line in match.splitlines() if line.strip()]
             for line in lines:
                 name, args = self._parse_tool_code_line(line)
                 if name:
-                    tool_calls.append(self._make_tool_call(name, args))
+                    tool_calls.append(SimpleNamespace(name=name, arguments=args))
 
         for match in _ACTIONS_JSON_PATTERN.findall(content):
-            tool_calls.extend(self._parse_plan_actions(match))
+            tool_calls.extend(self._parse_plan(match))
 
         content_stripped = content.strip()
         if content_stripped.startswith("{") and content_stripped.endswith("}"):
-            tool_calls.extend(self._parse_plan_actions(content_stripped))
+            tool_calls.extend(self._parse_plan(content_stripped))
 
         return tool_calls
 
-    def _parse_tool_list(self, raw: str) -> list[Any]:
-        try:
-            items = json.loads(raw)
-        except Exception:
-            return []
-        tool_calls: list[Any] = []
-        for item in items:
-            name = item.get("tool") or item.get("function") or item.get("name")
-            params = item.get("parameters") or item.get("params") or {}
-            if name:
-                tool_calls.append(self._make_tool_call(name, params))
-        return tool_calls
-
-    def _parse_plan_actions(self, raw: str) -> list[Any]:
+    def _parse_plan(self, raw: str) -> list[Any]:
         try:
             data = json.loads(raw)
         except Exception:
             return []
+
+        tool_calls: list[Any] = []
+        if isinstance(data, list):
+            for item in data:
+                name = item.get("tool") or item.get("function") or item.get("name")
+                params = item.get("parameters") or item.get("params") or {}
+                if name:
+                    tool_calls.append(SimpleNamespace(name=name, arguments=params))
+            return tool_calls
+
         actions = data.get("actions") or data.get("plan") or []
         if isinstance(actions, dict):
             actions = actions.get("steps", [])
-        tool_calls: list[Any] = []
         for action in actions:
             if action.get("action") == "execute_in_sandbox":
-                tool_calls.append(self._make_tool_call("execute_in_sandbox", {"task": action.get("task")}))
+                tool_calls.append(
+                    SimpleNamespace(
+                        name="execute_in_sandbox",
+                        arguments={"task": action.get("task")},
+                    )
+                )
                 continue
             name = action.get("function") or action.get("function_name") or action.get("name")
             params = action.get("parameters") or action.get("params") or action.get("arguments") or {}
             if name:
-                tool_calls.append(self._make_tool_call(name, params))
+                tool_calls.append(SimpleNamespace(name=name, arguments=params))
         return tool_calls
 
     def _parse_tool_code_line(self, line: str) -> tuple[str | None, dict[str, Any]]:
@@ -202,31 +206,19 @@ class Orchestrator:
                     args[key] = value
         return name, args
 
-    def _make_tool_call(self, name: str, arguments: dict[str, Any]) -> Any:
-        return type("ToolCall", (), {"name": name, "arguments": arguments})
-
-    def _build_fallback_sandbox_code(self, task: str | None, results: list[dict[str, Any]]) -> str:
-        payload = {"task": task or "결과 결합", "results": results}
-        encoded = json.dumps(payload, ensure_ascii=False)
-        return (
-            "import json\n"
-            f"data = json.loads('''{encoded}''')\n"
-            "print(json.dumps(data, ensure_ascii=False))\n"
-        )
-
-    def _inject_inputs(
+    def _build_sandbox_code(
         self,
-        code: str,
+        code: str | None,
+        task: str | None,
         inputs: dict[str, Any] | None,
         results: list[dict[str, Any]],
     ) -> str:
-        payload = inputs if inputs is not None else {"results": results}
+        payload = inputs if inputs is not None else {"results": results, "task": task}
         encoded = json.dumps(payload, ensure_ascii=False)
-        prelude = (
-            "import json\n"
-            f"inputs = json.loads('''{encoded}''')\n"
-        )
-        return f"{prelude}\n{code}"
+        prelude = "import json\n" f"inputs = json.loads('''{encoded}''')\n"
+        if code:
+            return f"{prelude}\n{code}"
+        return f"{prelude}\nprint(json.dumps(inputs, ensure_ascii=False))"
 
     def _validate_code(self, code: str) -> None:
         if _BLOCKED_CODE_PATTERN.search(code):
