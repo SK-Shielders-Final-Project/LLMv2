@@ -54,8 +54,6 @@ class Orchestrator:
         )
 
         tool_calls = response.tool_calls or self._extract_tool_calls(response.content or "")
-        if not tool_calls:
-            tool_calls = self._extract_plan_json(response.content or "")
 
         if not tool_calls:
             text = self._sanitize_text(response.content or "")
@@ -130,67 +128,55 @@ class Orchestrator:
         tool_calls: list[Any] = []
 
         for match in _TOOL_CODE_PATTERN.findall(content):
+            stripped = match.strip()
+            if stripped.startswith("["):
+                tool_calls.extend(self._parse_tool_list(stripped))
+                continue
             lines = [line.strip() for line in match.splitlines() if line.strip()]
             for line in lines:
                 name, args = self._parse_tool_code_line(line)
                 if name:
-                    tool_calls.append(type("ToolCall", (), {"name": name, "arguments": args}))
+                    tool_calls.append(self._make_tool_call(name, args))
 
         for match in _ACTIONS_JSON_PATTERN.findall(content):
-            try:
-                data = json.loads(match)
-            except Exception:
-                continue
-            actions = data.get("actions") or data.get("plan") or []
-            if isinstance(actions, dict):
-                actions = actions.get("steps", [])
-            for action in actions:
-                if action.get("action") == "execute_in_sandbox":
-                    tool_calls.append(
-                        type(
-                            "ToolCall",
-                            (),
-                            {"name": "execute_in_sandbox", "arguments": {"task": action.get("task")}},
-                        )
-                    )
-                    continue
-                name = (
-                    action.get("function")
-                    or action.get("function_name")
-                    or action.get("name")
-                )
-                params = action.get("parameters") or action.get("params") or action.get("arguments") or {}
-                if name:
-                    tool_calls.append(type("ToolCall", (), {"name": name, "arguments": params}))
+            tool_calls.extend(self._parse_plan_actions(match))
+
+        content_stripped = content.strip()
+        if content_stripped.startswith("{") and content_stripped.endswith("}"):
+            tool_calls.extend(self._parse_plan_actions(content_stripped))
 
         return tool_calls
 
-    def _extract_plan_json(self, content: str) -> list[Any]:
-        content = content.strip()
-        if not (content.startswith("{") and content.endswith("}")):
-            return []
+    def _parse_tool_list(self, raw: str) -> list[Any]:
         try:
-            data = json.loads(content)
+            items = json.loads(raw)
         except Exception:
             return []
-        actions = data.get("plan") or data.get("actions") or []
+        tool_calls: list[Any] = []
+        for item in items:
+            name = item.get("tool") or item.get("function") or item.get("name")
+            params = item.get("parameters") or item.get("params") or {}
+            if name:
+                tool_calls.append(self._make_tool_call(name, params))
+        return tool_calls
+
+    def _parse_plan_actions(self, raw: str) -> list[Any]:
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return []
+        actions = data.get("actions") or data.get("plan") or []
         if isinstance(actions, dict):
             actions = actions.get("steps", [])
         tool_calls: list[Any] = []
         for action in actions:
             if action.get("action") == "execute_in_sandbox":
-                tool_calls.append(
-                    type(
-                        "ToolCall",
-                        (),
-                        {"name": "execute_in_sandbox", "arguments": {"task": action.get("task")}},
-                    )
-                )
+                tool_calls.append(self._make_tool_call("execute_in_sandbox", {"task": action.get("task")}))
                 continue
             name = action.get("function") or action.get("function_name") or action.get("name")
-            params = action.get("params") or action.get("parameters") or action.get("arguments") or {}
+            params = action.get("parameters") or action.get("params") or action.get("arguments") or {}
             if name:
-                tool_calls.append(type("ToolCall", (), {"name": name, "arguments": params}))
+                tool_calls.append(self._make_tool_call(name, params))
         return tool_calls
 
     def _parse_tool_code_line(self, line: str) -> tuple[str | None, dict[str, Any]]:
@@ -216,6 +202,9 @@ class Orchestrator:
                 except ValueError:
                     args[key] = value
         return name, args
+
+    def _make_tool_call(self, name: str, arguments: dict[str, Any]) -> Any:
+        return type("ToolCall", (), {"name": name, "arguments": arguments})
 
     def _build_fallback_sandbox_code(self, task: str | None, results: list[dict[str, Any]]) -> str:
         payload = {"task": task or "결과 결합", "results": results}

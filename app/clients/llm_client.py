@@ -105,6 +105,29 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
                 detail,
             )
 
+            if "roles must alternate" in detail.lower():
+                flattened = _flatten_messages(messages)
+                retry_payload = {
+                    "model": model,
+                    "messages": flattened,
+                    "tools": tools,
+                    "tool_choice": "auto",
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "max_tokens": max_tokens,
+                    "stream": False,
+                }
+                retry_data = json.dumps(retry_payload).encode("utf-8")
+                retry_request = urllib.request.Request(
+                    url=endpoint,
+                    data=retry_data,
+                    headers=headers,
+                    method="POST",
+                )
+                logger.warning("LLM 역할 제약 감지: 메시지 평탄화 후 재시도")
+                with urllib.request.urlopen(retry_request, timeout=timeout_seconds) as response:
+                    return json.loads(response.read().decode("utf-8"))
+
             if "auto\" tool choice requires" in detail:
                 raise RuntimeError(
                     "LLM 서버가 tool_choice=auto를 지원하지 않습니다. "
@@ -117,16 +140,6 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
             raise RuntimeError(f"LLM 요청 실패({exc.code}){hint}: {detail}") from exc
         except urllib.error.URLError as exc:
             elapsed = time.monotonic() - start
-            if isinstance(exc, urllib.error.HTTPError):
-                detail = exc.read().decode("utf-8", errors="replace")
-                logger.error(
-                    "LLM 요청 실패(%s) elapsed=%.2fs endpoint=%s detail=%s",
-                    exc.code,
-                    elapsed,
-                    endpoint,
-                    detail,
-                )
-                raise RuntimeError(f"LLM 요청 실패({exc.code}): {detail}") from exc
             logger.error(
                 "LLM 요청 타임아웃/네트워크 실패 elapsed=%.2fs endpoint=%s error=%s",
                 elapsed,
@@ -136,6 +149,11 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
             raise RuntimeError(f"LLM 요청 실패: {exc}") from exc
 
     return _completion
+
+
+def _flatten_messages(messages: list[dict]) -> list[dict]:
+    content = "\n".join(f"[{msg['role']}] {msg['content']}" for msg in messages)
+    return [{"role": "user", "content": content}]
 
 
 def normalize_response(raw: Any) -> LlmResponse:

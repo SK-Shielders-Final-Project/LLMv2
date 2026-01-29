@@ -9,7 +9,6 @@ class FunctionRegistry:
     FastAPI는 함수 레지스트리 역할만 수행한다.
     실제 실행 주체는 LLM이며, 이 레지스트리는 호출 가능한 함수 목록을 제공한다.
     """
-    
     def __init__(self) -> None:
         self._functions: dict[str, Callable[..., Any]] = {
             "get_nearby_stations": get_nearby_stations,
@@ -32,9 +31,6 @@ class FunctionRegistry:
         if name not in self._functions:
             raise ValueError(f"Unknown function: {name}")
         return self._functions[name](**kwargs)
-
-
-
 
 def get_nearby_stations(lat: float, lon: float) -> list[dict[str, Any]]:
     """
