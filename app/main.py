@@ -41,7 +41,15 @@ def generate(request: GenerateRequest) -> GenerateResponse:
     Spring WAS에서 들어온 자연어 요청을 LLM으로 전달하고,
     필요한 함수 및 Sandbox 실행을 오케스트레이션한다.
     """
-    message = LlmMessage(role="user", user_id=request.user_id, content=request.comment)
+    if request.message is not None:
+        message = request.message
+    elif request.user_id is not None and request.comment:
+        message = LlmMessage(role="user", user_id=request.user_id, content=request.comment)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="요청 형식이 올바르지 않습니다. message 또는 comment/user_id를 제공하세요.",
+        )
     try:
         result = orchestrator.handle_user_request(message)
     except Exception as exc:

@@ -41,8 +41,14 @@ class AssistantResponse(BaseModel):
 
 
 class GenerateRequest(BaseModel):
-    comment: str = Field(..., description="사용자 자연어 요청")
-    user_id: int = Field(..., description="요청 사용자 ID")
+    """
+    /api/generate 요청 스키마
+    - message 방식: {"message": {"role": "user", "user_id": 13, "content": "..."}}
+    - 단순 방식: {"comment": "...", "user_id": 13}
+    """
+    message: LlmMessage | None = Field(default=None, description="메시지 객체")
+    comment: str | None = Field(default=None, description="사용자 자연어 요청")
+    user_id: int | None = Field(default=None, description="요청 사용자 ID")
 
     class Config:
         str_strip_whitespace = True
