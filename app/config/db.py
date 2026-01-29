@@ -43,7 +43,16 @@ def get_connection() -> Iterable[Any]:
     connect_timeout = int(os.getenv("ORACLE_CONNECT_TIMEOUT_SECONDS", "5") or "5")
     call_timeout_ms = int(os.getenv("ORACLE_CALL_TIMEOUT_MS", "10000") or "10000")
     start = time.monotonic()
-    conn = oracledb.connect(user=user, password=password, dsn=_get_dsn(), timeout=connect_timeout)
+    try:
+        conn = oracledb.connect(
+            user=user,
+            password=password,
+            dsn=_get_dsn(),
+            timeout=connect_timeout,
+        )
+    except TypeError:
+        logger.warning("oracledb.connect가 timeout 인자를 지원하지 않습니다. 기본값으로 연결합니다.")
+        conn = oracledb.connect(user=user, password=password, dsn=_get_dsn())
     conn.call_timeout = call_timeout_ms
     logger.info(
         "DB 연결 성공 elapsed=%.2fs call_timeout_ms=%s",
