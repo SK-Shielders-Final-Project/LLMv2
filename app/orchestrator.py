@@ -65,9 +65,13 @@ class Orchestrator:
         for call in tool_calls:
             args = self._parse_args(call.arguments)
             if call.name == "execute_in_sandbox":
-                self._validate_code(args.get("code", ""))
+                code = args.get("code")
+                task = args.get("task")
+                if not code:
+                    code = self._build_fallback_sandbox_code(task=task, results=results)
+                self._validate_code(code)
                 sandbox_result = self.sandbox_client.run_code(
-                    code=args.get("code", ""),
+                    code=code,
                     required_packages=args.get("required_packages", []),
                 )
                 results.append({"tool": call.name, "result": sandbox_result})
@@ -127,10 +131,14 @@ class Orchestrator:
                 data = json.loads(match)
             except Exception:
                 continue
-            actions = data.get("actions", [])
+            actions = data.get("actions") or data.get("plan") or []
             for action in actions:
-                name = action.get("function") or action.get("function_name")
-                params = action.get("parameters", {})
+                name = (
+                    action.get("function")
+                    or action.get("function_name")
+                    or action.get("name")
+                )
+                params = action.get("parameters") or action.get("params") or {}
                 if name:
                     tool_calls.append(type("ToolCall", (), {"name": name, "arguments": params}))
 
@@ -159,6 +167,15 @@ class Orchestrator:
                 except ValueError:
                     args[key] = value
         return name, args
+
+    def _build_fallback_sandbox_code(self, task: str | None, results: list[dict[str, Any]]) -> str:
+        payload = {"task": task or "결과 결합", "results": results}
+        encoded = json.dumps(payload, ensure_ascii=False)
+        return (
+            "import json\n"
+            f"data = json.loads('''{encoded}''')\n"
+            "print(json.dumps(data, ensure_ascii=False))\n"
+        )
 
     def _validate_code(self, code: str) -> None:
         if _BLOCKED_CODE_PATTERN.search(code):
