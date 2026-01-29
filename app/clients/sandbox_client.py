@@ -7,7 +7,7 @@ import urllib.request
 from typing import Any
 
 import docker
-
+from docker.errors import DockerException
 
 class SandboxClient:
     """
@@ -41,8 +41,15 @@ class SandboxClient:
             return json.loads(response.read().decode("utf-8"))
 
     def _run_via_exec(self, code: str, required_packages: list[str]) -> dict[str, Any]:
-        client = docker.from_env()
-        container = client.containers.get(self.exec_container)
+        try:
+            client = docker.from_env()
+            container = client.containers.get(self.exec_container)
+        except (DockerException, FileNotFoundError) as exc:
+            raise RuntimeError(
+                "Docker 소켓에 접근할 수 없습니다. "
+                "호스트에서 docker 데몬이 실행 중인지, "
+                "DOCKER_HOST 설정 또는 SANDBOX_SERVER_URL 사용을 확인하세요."
+            ) from exc
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         install_cmd = f"pip install {' '.join(required_packages)} && " if required_packages else ""
         command = (
