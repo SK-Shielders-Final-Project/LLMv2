@@ -69,7 +69,7 @@ def get_user_profile(user_id: int) -> dict[str, Any]:
     민감 정보(password, card_number, pass)는 반환하지 않습니다.
     """
     query = (
-        "SELECT user_id, username, name, email, phone, total_point, created_at, updated_at "
+        "SELECT user_id, username, name, email, phone, total_point, admin_level, created_at, updated_at "
         "FROM users WHERE user_id = :user_id"
     )
     return fetch_one(query, {"user_id": user_id}) or {}
@@ -79,7 +79,8 @@ def get_payments(user_id: int, limit: int = 10) -> list[dict[str, Any]]:
     """payments 테이블 기반 결제 내역을 반환합니다."""
     safe_limit = max(1, min(int(limit), 50))
     query = (
-        "SELECT payment_id, user_id, amount, payment_status, payment_method, transaction_id, created_at "
+        "SELECT payment_id, user_id, amount, remain_amount, payment_status, payment_method, "
+        "order_id, payment_key, created_at "
         "FROM payments WHERE user_id = :user_id "
         "ORDER BY created_at DESC "
         f"FETCH FIRST {safe_limit} ROWS ONLY"
@@ -152,14 +153,9 @@ def get_available_bikes(
 
 
 def get_notices(limit: int = 5) -> list[dict[str, Any]]:
-    """notices 테이블 기반 공지사항을 반환합니다."""
-    safe_limit = max(1, min(int(limit), 20))
-    query = (
-        "SELECT notice_id, title, content, created_at, updated_at "
-        "FROM notices ORDER BY created_at DESC "
-        f"FETCH FIRST {safe_limit} ROWS ONLY"
-    )
-    return fetch_all(query)
+    """현재 스키마에는 notices 테이블이 없어 빈 목록을 반환합니다."""
+    _ = limit
+    return []
 
 
 def get_inquiries(user_id: int) -> list[dict[str, Any]]:
