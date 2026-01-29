@@ -39,11 +39,16 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
     if not base_url:
         raise RuntimeError("LLM_BASE_URL이 설정되지 않았습니다.")
 
-    model = os.getenv("MODEL_ID", "")
-    temperature = float(os.getenv("TEMPERATURE", ""))
-    top_p = float(os.getenv("TOP_P", ""))
-    max_tokens = int(os.getenv("MAX_TOKENS", ""))
-    timeout_seconds = int(os.getenv("LLM_TIMEOUT_SECONDS", ""))
+    model = os.getenv("MODEL_ID", "gpt-4o-mini")
+    temperature_raw = os.getenv("TEMPERATURE", "0.7")
+    top_p_raw = os.getenv("TOP_P", "0.9")
+    max_tokens_raw = os.getenv("MAX_TOKENS", "1024")
+    timeout_raw = os.getenv("LLM_TIMEOUT_SECONDS", "20")
+
+    temperature = float(temperature_raw) if temperature_raw.strip() else 0.7
+    top_p = float(top_p_raw) if top_p_raw.strip() else 0.9
+    max_tokens = int(max_tokens_raw) if max_tokens_raw.strip() else 1024
+    timeout_seconds = int(timeout_raw) if timeout_raw.strip() else 20
 
     base_url = base_url.rstrip("/")
     endpoint = f"{base_url}/chat/completions"
