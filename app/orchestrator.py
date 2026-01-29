@@ -20,6 +20,8 @@ _BLOCKED_CODE_PATTERN = re.compile(
 )
 
 _SENSITIVE_KEYS = {"password", "card_number", "pass"}
+_TOOL_CODE_PATTERN = re.compile(r"```tool_code\s*(.+?)```", re.DOTALL | re.IGNORECASE)
+_ACTIONS_JSON_PATTERN = re.compile(r"```json\s*(\{.+?\})\s*```", re.DOTALL | re.IGNORECASE)
 
 
 class Orchestrator:
@@ -51,14 +53,16 @@ class Orchestrator:
             len(response.tool_calls),
         )
 
-        if not response.tool_calls:
+        tool_calls = response.tool_calls or self._extract_tool_calls(response.content or "")
+
+        if not tool_calls:
             text = self._sanitize_text(response.content or "")
             return {"text": text, "model": response.model, "tools_used": []}
 
         results: list[dict[str, Any]] = []
         tools_used: list[str] = []
 
-        for call in response.tool_calls:
+        for call in tool_calls:
             args = self._parse_args(call.arguments)
             if call.name == "execute_in_sandbox":
                 self._validate_code(args.get("code", ""))
@@ -101,6 +105,60 @@ class Orchestrator:
         if isinstance(arguments, str):
             return json.loads(arguments)
         raise ValueError("Tool arguments 형식이 올바르지 않습니다.")
+
+    def _extract_tool_calls(self, content: str) -> list[Any]:
+        """
+        LLM이 tool_calls 대신 텍스트로 도구 호출을 작성하는 경우를 파싱한다.
+        지원 형식:
+        - ```tool_code\nget_user_profile(user_id=13)\n```
+        - ```json\n{"actions":[{"function":"get_user_profile","parameters":{"user_id":13}}]}\n```
+        """
+        tool_calls: list[Any] = []
+
+        for match in _TOOL_CODE_PATTERN.findall(content):
+            lines = [line.strip() for line in match.splitlines() if line.strip()]
+            for line in lines:
+                name, args = self._parse_tool_code_line(line)
+                if name:
+                    tool_calls.append(type("ToolCall", (), {"name": name, "arguments": args}))
+
+        for match in _ACTIONS_JSON_PATTERN.findall(content):
+            try:
+                data = json.loads(match)
+            except Exception:
+                continue
+            actions = data.get("actions", [])
+            for action in actions:
+                name = action.get("function")
+                params = action.get("parameters", {})
+                if name:
+                    tool_calls.append(type("ToolCall", (), {"name": name, "arguments": params}))
+
+        return tool_calls
+
+    def _parse_tool_code_line(self, line: str) -> tuple[str | None, dict[str, Any]]:
+        if "(" not in line or not line.endswith(")"):
+            return None, {}
+        name, raw_args = line.split("(", 1)
+        name = name.strip()
+        raw_args = raw_args[:-1].strip()
+        if not raw_args:
+            return name, {}
+        args: dict[str, Any] = {}
+        for pair in raw_args.split(","):
+            if "=" not in pair:
+                continue
+            key, value = pair.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if value.isdigit():
+                args[key] = int(value)
+            else:
+                try:
+                    args[key] = float(value)
+                except ValueError:
+                    args[key] = value
+        return name, args
 
     def _validate_code(self, code: str) -> None:
         if _BLOCKED_CODE_PATTERN.search(code):
