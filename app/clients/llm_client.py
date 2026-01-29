@@ -94,6 +94,14 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
                 endpoint,
                 detail,
             )
+
+            if "auto\" tool choice requires" in detail:
+                raise RuntimeError(
+                    "LLM 서버가 tool_choice=auto를 지원하지 않습니다. "
+                    "LLM 서버 실행 옵션에 --enable-auto-tool-choice 및 "
+                    "--tool-call-parser를 설정하세요."
+                ) from exc
+
             tool_error = "tools" in detail.lower() or "tool" in detail.lower()
             hint = " (tools 미지원 가능성)" if tool_error else ""
             raise RuntimeError(f"LLM 요청 실패({exc.code}){hint}: {detail}") from exc
