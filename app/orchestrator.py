@@ -129,7 +129,7 @@ class Orchestrator:
                 continue
             actions = data.get("actions", [])
             for action in actions:
-                name = action.get("function")
+                name = action.get("function") or action.get("function_name")
                 params = action.get("parameters", {})
                 if name:
                     tool_calls.append(type("ToolCall", (), {"name": name, "arguments": params}))

@@ -34,6 +34,8 @@ class FunctionRegistry:
         return self._functions[name](**kwargs)
 
 
+
+
 def get_nearby_stations(lat: float, lon: float) -> list[dict[str, Any]]:
     """
     지정된 좌표 근처의 자전거 위치 정보를 반환합니다.

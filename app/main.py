@@ -11,11 +11,13 @@ from app.clients.llm_client import LlmClient, build_http_completion_func
 from app.clients.sandbox_client import SandboxClient
 from app.orchestrator import Orchestrator
 from app.service.registry import FunctionRegistry
+from app.service.router import router as registry_router
 from app.schema import GenerateRequest, GenerateResponse, LlmMessage
 
 app = FastAPI(title="LLM Orchestrator API")
 
 load_dotenv()
+app.include_router(registry_router, prefix="/tools")
 
 
 def create_orchestrator() -> Orchestrator:
