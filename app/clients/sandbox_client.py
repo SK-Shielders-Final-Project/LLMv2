@@ -12,6 +12,8 @@ class SandboxClient:
     """
 
     def __init__(self, base_url: str, timeout_seconds: int = 15) -> None:
+        if not base_url:
+            raise RuntimeError("SANDBOX_SERVER_URL이 설정되지 않았습니다.")
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
 
