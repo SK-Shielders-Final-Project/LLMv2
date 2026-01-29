@@ -92,15 +92,6 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
                     endpoint,
                 )
                 return data
-        except urllib.error.URLError as exc:
-            elapsed = time.monotonic() - start
-            logger.error(
-                "LLM 요청 타임아웃/네트워크 실패 elapsed=%.2fs endpoint=%s error=%s",
-                elapsed,
-                endpoint,
-                exc,
-            )
-            raise RuntimeError(f"LLM 요청 실패: {exc}") from exc
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             tool_count = len(tools or [])
@@ -124,6 +115,25 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
             tool_error = "tools" in detail.lower() or "tool" in detail.lower()
             hint = " (tools 미지원 가능성)" if tool_error else ""
             raise RuntimeError(f"LLM 요청 실패({exc.code}){hint}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            elapsed = time.monotonic() - start
+            if isinstance(exc, urllib.error.HTTPError):
+                detail = exc.read().decode("utf-8", errors="replace")
+                logger.error(
+                    "LLM 요청 실패(%s) elapsed=%.2fs endpoint=%s detail=%s",
+                    exc.code,
+                    elapsed,
+                    endpoint,
+                    detail,
+                )
+                raise RuntimeError(f"LLM 요청 실패({exc.code}): {detail}") from exc
+            logger.error(
+                "LLM 요청 타임아웃/네트워크 실패 elapsed=%.2fs endpoint=%s error=%s",
+                elapsed,
+                endpoint,
+                exc,
+            )
+            raise RuntimeError(f"LLM 요청 실패: {exc}") from exc
 
     return _completion
 
