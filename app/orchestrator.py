@@ -132,13 +132,24 @@ class Orchestrator:
             except Exception:
                 continue
             actions = data.get("actions") or data.get("plan") or []
+            if isinstance(actions, dict):
+                actions = actions.get("steps", [])
             for action in actions:
+                if action.get("action") == "execute_in_sandbox":
+                    tool_calls.append(
+                        type(
+                            "ToolCall",
+                            (),
+                            {"name": "execute_in_sandbox", "arguments": {"task": action.get("task")}},
+                        )
+                    )
+                    continue
                 name = (
                     action.get("function")
                     or action.get("function_name")
                     or action.get("name")
                 )
-                params = action.get("parameters") or action.get("params") or {}
+                params = action.get("parameters") or action.get("params") or action.get("arguments") or {}
                 if name:
                     tool_calls.append(type("ToolCall", (), {"name": name, "arguments": params}))
 
