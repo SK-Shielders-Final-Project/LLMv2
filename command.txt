@@ -1,0 +1,9 @@
+python -m venv venv
+
+source venv/Scripts/activate
+
+pip3 freeze > tool.txt
+
+pip3 install -r tool.txt
+
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
