@@ -56,8 +56,7 @@ class Orchestrator:
         tool_calls = response.tool_calls or self._extract_tool_calls(response.content or "")
 
         if not tool_calls:
-            text = self._sanitize_text(response.content or "")
-            return {"text": text, "model": response.model, "tools_used": []}
+            raise ValueError("LLM이 tool_calls 또는 plan JSON을 반환하지 않았습니다.")
 
         results: list[dict[str, Any]] = []
         tools_used: list[str] = []
