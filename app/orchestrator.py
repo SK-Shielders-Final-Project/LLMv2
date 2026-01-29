@@ -87,6 +87,13 @@ class Orchestrator:
 
         final_messages = [
             {"role": "system", "content": system_prompt},
+            {
+                "role": "system",
+                "content": (
+                    "이제 도구 호출은 금지된다. plan/json/tool_code를 출력하지 말고 "
+                    "최종 사용자 답변만 자연어로 작성하라."
+                ),
+            },
             {"role": "user", "content": message.content},
             {
                 "role": "system",
