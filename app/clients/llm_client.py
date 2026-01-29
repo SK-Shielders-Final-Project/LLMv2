@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -51,7 +53,9 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
     timeout_seconds = int(timeout_raw) if timeout_raw.strip() else 20
 
     base_url = base_url.rstrip("/")
-    endpoint = f"{base_url}/chat/completions"
+    endpoint = os.getenv("LLM_CHAT_ENDPOINT", f"{base_url}/chat/completions")
+    api_key = os.getenv("LLM_API_KEY")
+    logger = logging.getLogger("llm_client")
 
     def _completion(messages: list[dict], tools: list[dict]) -> Any:
         payload = {
@@ -65,14 +69,34 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
             "stream": False,
         }
         data = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
         request = urllib.request.Request(
             url=endpoint,
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            tool_count = len(tools or [])
+            tool_hint = "tools" if tool_count > 0 else "no-tools"
+            logger.error(
+                "LLM 요청 실패(%s) tool_count=%s tool_hint=%s endpoint=%s detail=%s",
+                exc.code,
+                tool_count,
+                tool_hint,
+                endpoint,
+                detail,
+            )
+            tool_error = "tools" in detail.lower() or "tool" in detail.lower()
+            hint = " (tools 미지원 가능성)" if tool_error else ""
+            raise RuntimeError(f"LLM 요청 실패({exc.code}){hint}: {detail}") from exc
 
     return _completion
 
