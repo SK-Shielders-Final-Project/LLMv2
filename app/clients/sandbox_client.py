@@ -19,6 +19,7 @@ class SandboxClient:
         self.base_url = base_url.rstrip("/") if base_url else ""
         self.timeout_seconds = timeout_seconds
         self.exec_container = os.getenv("SANDBOX_EXEC_CONTAINER")
+        self.inner_exec_container = os.getenv("SANDBOX_INNER_CONTAINER")
         self.exec_workdir = os.getenv("SANDBOX_EXEC_WORKDIR", "/")
 
     def run_code(self, code: str, required_packages: list[str] | None = None) -> dict[str, Any]:
@@ -52,9 +53,10 @@ class SandboxClient:
             ) from exc
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         install_cmd = f"pip install {' '.join(required_packages)} && " if required_packages else ""
+        inner_prefix = f"docker exec {self.inner_exec_container} " if self.inner_exec_container else ""
         command = (
             "bash -lc \""
-            f"{install_cmd}python - <<'PY'\n"
+            f"{inner_prefix}{install_cmd}python - <<'PY'\n"
             "import base64\n"
             f"exec(base64.b64decode('{encoded}').decode('utf-8'))\n"
             "PY\""
