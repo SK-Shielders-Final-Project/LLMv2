@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -58,6 +59,7 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
     logger = logging.getLogger("llm_client")
 
     def _completion(messages: list[dict], tools: list[dict]) -> Any:
+        start = time.monotonic()
         payload = {
             "model": model,
             "messages": messages,
@@ -81,7 +83,24 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
         )
         try:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8"))
+                data = json.loads(response.read().decode("utf-8"))
+                elapsed = time.monotonic() - start
+                logger.info(
+                    "LLM 응답 성공 elapsed=%.2fs tool_count=%s endpoint=%s",
+                    elapsed,
+                    len(tools or []),
+                    endpoint,
+                )
+                return data
+        except urllib.error.URLError as exc:
+            elapsed = time.monotonic() - start
+            logger.error(
+                "LLM 요청 타임아웃/네트워크 실패 elapsed=%.2fs endpoint=%s error=%s",
+                elapsed,
+                endpoint,
+                exc,
+            )
+            raise RuntimeError(f"LLM 요청 실패: {exc}") from exc
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             tool_count = len(tools or [])

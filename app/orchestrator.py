@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from typing import Any
 
 from app.clients.llm_client import LlmClient
@@ -32,6 +34,8 @@ class Orchestrator:
         self.registry = registry
 
     def handle_user_request(self, message: LlmMessage) -> dict[str, Any]:
+        logger = logging.getLogger("orchestrator")
+        start = time.monotonic()
         system_prompt = build_system_context(message)
         tools = build_tool_schema()
 
@@ -41,6 +45,11 @@ class Orchestrator:
         ]
 
         response = self.llm_client.create_completion(messages=messages, tools=tools)
+        logger.info(
+            "LLM 1차 응답 elapsed=%.2fs tool_calls=%s",
+            time.monotonic() - start,
+            len(response.tool_calls),
+        )
 
         if not response.tool_calls:
             text = self._sanitize_text(response.content or "")
@@ -75,6 +84,10 @@ class Orchestrator:
         ]
 
         final_response = self.llm_client.create_completion(messages=final_messages, tools=tools)
+        logger.info(
+            "LLM 최종 응답 elapsed=%.2fs",
+            time.monotonic() - start,
+        )
         final_text = self._sanitize_text(final_response.content or "")
         return {
             "text": final_text,

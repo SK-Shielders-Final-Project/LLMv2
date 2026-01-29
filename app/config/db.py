@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+import time
 from contextlib import contextmanager
 from datetime import date, datetime
 from typing import Any, Iterable
@@ -37,7 +39,17 @@ def get_connection() -> Iterable[Any]:
     if not user or not password:
         raise RuntimeError("ORACLE_USER/ORACLE_PASSWORD가 설정되지 않았습니다.")
 
-    conn = oracledb.connect(user=user, password=password, dsn=_get_dsn())
+    logger = logging.getLogger("db")
+    connect_timeout = int(os.getenv("ORACLE_CONNECT_TIMEOUT_SECONDS", "5") or "5")
+    call_timeout_ms = int(os.getenv("ORACLE_CALL_TIMEOUT_MS", "10000") or "10000")
+    start = time.monotonic()
+    conn = oracledb.connect(user=user, password=password, dsn=_get_dsn(), timeout=connect_timeout)
+    conn.call_timeout = call_timeout_ms
+    logger.info(
+        "DB 연결 성공 elapsed=%.2fs call_timeout_ms=%s",
+        time.monotonic() - start,
+        call_timeout_ms,
+    )
     try:
         yield conn
     finally:
@@ -45,20 +57,26 @@ def get_connection() -> Iterable[Any]:
 
 
 def fetch_all(query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    logger = logging.getLogger("db")
+    start = time.monotonic()
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query, params or {})
         rows = cursor.fetchall()
         columns = [col[0].lower() for col in cursor.description]
+    logger.info("DB fetch_all rows=%s elapsed=%.2fs", len(rows), time.monotonic() - start)
     return [_row_to_dict(columns, row) for row in rows]
 
 
 def fetch_one(query: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    logger = logging.getLogger("db")
+    start = time.monotonic()
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query, params or {})
         row = cursor.fetchone()
         columns = [col[0].lower() for col in cursor.description] if row else []
+    logger.info("DB fetch_one hit=%s elapsed=%.2fs", row is not None, time.monotonic() - start)
     return _row_to_dict(columns, row) if row else None
 
 
