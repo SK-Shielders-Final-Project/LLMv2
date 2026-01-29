@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
-from app.clients.llm_client import LlmClient
+from app.clients.llm_client import LlmClient, build_http_completion_func
 from app.clients.sandbox_client import SandboxClient
 from app.orchestrator import Orchestrator
 from app.service.registry import FunctionRegistry
@@ -14,13 +14,10 @@ from app.schema import GenerateRequest, GenerateResponse, LlmMessage
 app = FastAPI(title="LLM Orchestrator API")
 
 
-def _llm_completion_stub(messages: list[dict], tools: list[dict]) -> Any:
-    raise RuntimeError("LLM 클라이언트가 구성되지 않았습니다.")
-
-
 def create_orchestrator() -> Orchestrator:
-    llm_client = LlmClient(_llm_completion_stub)
-    sandbox_url = os.getenv("SANDBOX_SERVER_URL", "http://sandbox-server:8001")
+    llm_completion = build_http_completion_func()
+    llm_client = LlmClient(llm_completion)
+    sandbox_url = os.getenv("SANDBOX_SERVER_URL", "")
     sandbox_client = SandboxClient(base_url=sandbox_url, timeout_seconds=20)
     registry = FunctionRegistry()
     return Orchestrator(llm_client=llm_client, sandbox_client=sandbox_client, registry=registry)

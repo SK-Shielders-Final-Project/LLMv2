@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -29,6 +32,44 @@ class LlmClient:
     def create_completion(self, messages: list[dict], tools: list[dict]) -> LlmResponse:
         raw = self._completion_func(messages, tools)
         return normalize_response(raw)
+
+
+def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
+    base_url = os.getenv("LLM_BASE_URL")
+    if not base_url:
+        raise RuntimeError("LLM_BASE_URL이 설정되지 않았습니다.")
+
+    model = os.getenv("MODEL_ID", "")
+    temperature = float(os.getenv("TEMPERATURE", ""))
+    top_p = float(os.getenv("TOP_P", ""))
+    max_tokens = int(os.getenv("MAX_TOKENS", ""))
+    timeout_seconds = int(os.getenv("LLM_TIMEOUT_SECONDS", ""))
+
+    base_url = base_url.rstrip("/")
+    endpoint = f"{base_url}/chat/completions"
+
+    def _completion(messages: list[dict], tools: list[dict]) -> Any:
+        payload = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+            "temperature": temperature,
+            "top_p": top_p,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        data = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            url=endpoint,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    return _completion
 
 
 def normalize_response(raw: Any) -> LlmResponse:
