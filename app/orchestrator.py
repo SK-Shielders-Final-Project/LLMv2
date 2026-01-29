@@ -54,6 +54,8 @@ class Orchestrator:
         )
 
         tool_calls = response.tool_calls or self._extract_tool_calls(response.content or "")
+        if not tool_calls:
+            tool_calls = self._extract_plan_json(response.content or "")
 
         if not tool_calls:
             text = self._sanitize_text(response.content or "")
@@ -69,6 +71,7 @@ class Orchestrator:
                 task = args.get("task")
                 if not code:
                     code = self._build_fallback_sandbox_code(task=task, results=results)
+                code = self._inject_inputs(code=code, inputs=args.get("inputs"), results=results)
                 self._validate_code(code)
                 sandbox_result = self.sandbox_client.run_code(
                     code=code,
@@ -155,6 +158,34 @@ class Orchestrator:
 
         return tool_calls
 
+    def _extract_plan_json(self, content: str) -> list[Any]:
+        content = content.strip()
+        if not (content.startswith("{") and content.endswith("}")):
+            return []
+        try:
+            data = json.loads(content)
+        except Exception:
+            return []
+        actions = data.get("plan") or data.get("actions") or []
+        if isinstance(actions, dict):
+            actions = actions.get("steps", [])
+        tool_calls: list[Any] = []
+        for action in actions:
+            if action.get("action") == "execute_in_sandbox":
+                tool_calls.append(
+                    type(
+                        "ToolCall",
+                        (),
+                        {"name": "execute_in_sandbox", "arguments": {"task": action.get("task")}},
+                    )
+                )
+                continue
+            name = action.get("function") or action.get("function_name") or action.get("name")
+            params = action.get("params") or action.get("parameters") or action.get("arguments") or {}
+            if name:
+                tool_calls.append(type("ToolCall", (), {"name": name, "arguments": params}))
+        return tool_calls
+
     def _parse_tool_code_line(self, line: str) -> tuple[str | None, dict[str, Any]]:
         if "(" not in line or not line.endswith(")"):
             return None, {}
@@ -187,6 +218,20 @@ class Orchestrator:
             f"data = json.loads('''{encoded}''')\n"
             "print(json.dumps(data, ensure_ascii=False))\n"
         )
+
+    def _inject_inputs(
+        self,
+        code: str,
+        inputs: dict[str, Any] | None,
+        results: list[dict[str, Any]],
+    ) -> str:
+        payload = inputs if inputs is not None else {"results": results}
+        encoded = json.dumps(payload, ensure_ascii=False)
+        prelude = (
+            "import json\n"
+            f"inputs = json.loads('''{encoded}''')\n"
+        )
+        return f"{prelude}\n{code}"
 
     def _validate_code(self, code: str) -> None:
         if _BLOCKED_CODE_PATTERN.search(code):

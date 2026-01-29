@@ -33,7 +33,9 @@ SYSTEM_PROMPT = (
     "[응답 규칙]\n"
     "- 모든 답변은 한국어로 작성\n"
     "- 필요하면 도구(함수)를 호출하고, 결과를 바탕으로 최종 문맥을 생성\n"
+    "- tool_calls가 지원되지 않는 모델인 경우, 아래 plan JSON 형식으로만 응답\n"
     "- 원하는 함수가 없으면 실행 가능한 Python 코드를 만들어 execute_in_sandbox로 요청\n"
+    "- execute_in_sandbox 호출 시 code 안에서 inputs 변수를 활용 가능(자동 주입됨)\n"
     "\n"
     "[입력 메시지 형식]\n"
     "- 백엔드에서 전달되는 메시지는 다음 형식이다:\n"
@@ -56,6 +58,18 @@ SYSTEM_PROMPT = (
     "- '문의', '문의 내역' → get_inquiries(user_id)\n"
     "- '주변 자전거', '대여 가능한 자전거' → get_available_bikes(lat, lon, radius_km)\n"
     "- '주변 스테이션' → get_nearby_stations(lat, lon)\n"
+    "\n"
+    "[도구 호출 출력 형식: plan JSON]\n"
+    "- 아래 형식 외의 텍스트는 출력하지 말 것\n"
+    "```\n"
+    "{\n"
+    "  \"plan\": [\n"
+    "    {\"function\":\"get_user_profile\",\"params\":{\"user_id\":13}},\n"
+    "    {\"function\":\"get_rentals\",\"params\":{\"user_id\":13,\"days\":30}},\n"
+    "    {\"function\":\"execute_in_sandbox\",\"params\":{\"task\":\"결합\"}}\n"
+    "  ]\n"
+    "}\n"
+    "```\n"
     "\n"
     "[Sandbox 판단 예시]\n"
     "- '일주일치 이용거리 시각화' → get_rentals → execute_in_sandbox(그래프 생성)\n"
@@ -99,6 +113,10 @@ def build_tool_schema() -> list[dict]:
                         "code": {
                             "type": "string",
                             "description": "실행할 Python 코드",
+                        },
+                        "inputs": {
+                            "type": "object",
+                            "description": "함수 결과 등 입력 데이터(없으면 자동 주입됨)",
                         },
                         "required_packages": {
                             "type": "array",
