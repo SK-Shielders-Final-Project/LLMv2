@@ -219,12 +219,16 @@ class Orchestrator:
             return []
 
         tool_calls: list[Any] = []
+        if isinstance(data, str):
+            return tool_calls
         if isinstance(data, list):
             for item in data:
                 name = item.get("tool") or item.get("function") or item.get("name")
                 params = item.get("parameters") or item.get("params") or {}
                 if name:
                     tool_calls.append(SimpleNamespace(name=name, arguments=params))
+            return tool_calls
+        if not isinstance(data, dict):
             return tool_calls
 
         actions = data.get("actions") or data.get("plan") or []
