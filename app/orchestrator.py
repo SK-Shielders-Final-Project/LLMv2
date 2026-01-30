@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import re
 import time
 from types import SimpleNamespace
@@ -84,9 +86,7 @@ class Orchestrator:
         tool_calls = response.tool_calls or self._extract_tool_calls(response.content or "")
 
         if not tool_calls:
-            tool_calls = self._fallback_tool_calls(message)
-            if not tool_calls:
-                raise ValueError("LLM이 tool_calls 또는 plan JSON을 반환하지 않았습니다.")
+            raise ValueError("LLM이 tool_calls 또는 plan JSON을 반환하지 않았습니다.")
 
 
         ## 결과, 사용된 도구, 이미지 생성 여부를 배열로 담음
@@ -202,35 +202,15 @@ class Orchestrator:
         for match in _ACTIONS_JSON_PATTERN.findall(content):
             tool_calls.extend(self._parse_plan(match))
 
+        for payload in self._extract_json_payloads(content):
+            tool_calls.extend(self._parse_function_payload(payload))
+
         content_stripped = content.strip()
         if content_stripped.startswith("{") and content_stripped.endswith("}"):
             tool_calls.extend(self._parse_plan(content_stripped))
 
         return tool_calls
 
-    def _fallback_tool_calls(self, message: LlmMessage) -> list[Any]:
-        """
-        LLM이 tool_calls를 반환하지 않을 때 최소한의 규칙 기반으로 도구를 선택한다.
-        """
-        content = (message.content or "").lower()
-        calls: list[Any] = []
-
-        def _add(name: str, args: dict[str, Any]) -> None:
-            calls.append(SimpleNamespace(name=name, arguments=args))
-
-        if any(keyword in content for keyword in ["내 정보", "내정보", "프로필", "사용자 정보"]):
-            _add("get_user_profile", {"user_id": message.user_id})
-        if any(keyword in content for keyword in ["이용 내역", "대여 내역", "이용내역", "대여내역"]):
-            _add("get_rentals", {"user_id": message.user_id, "days": 7})
-        if any(keyword in content for keyword in ["총 결제", "총결제", "결제 합계", "전체 결제"]):
-            _add("get_total_payments", {"user_id": message.user_id})
-        elif "결제" in content:
-            _add("get_payments", {"user_id": message.user_id})
-
-        if any(keyword in content for keyword in ["그래프", "시각화", "차트", "plot", "chart"]):
-            _add("execute_in_sandbox", {"task": "결과를 집계해 그래프를 생성"})
-
-        return calls
 
     def _parse_plan(self, raw: str) -> list[Any]:
         try:
@@ -264,6 +244,78 @@ class Orchestrator:
             if name:
                 tool_calls.append(SimpleNamespace(name=name, arguments=params))
         return tool_calls
+
+    def _parse_function_payload(self, payload: Any) -> list[Any]:
+        tool_calls: list[Any] = []
+
+        def _add(name: str | None, arguments: Any) -> None:
+            if not name:
+                return
+            args = arguments
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    args = {}
+            if not isinstance(args, dict):
+                args = {}
+            tool_calls.append(SimpleNamespace(name=name, arguments=args))
+
+        def _visit(node: Any) -> None:
+            if isinstance(node, list):
+                for item in node:
+                    _visit(item)
+                return
+            if not isinstance(node, dict):
+                return
+
+            if "tool_calls" in node and isinstance(node["tool_calls"], list):
+                for call in node["tool_calls"]:
+                    if isinstance(call, dict):
+                        function = call.get("function") or {}
+                        if isinstance(function, dict):
+                            _add(function.get("name"), function.get("arguments"))
+                        else:
+                            _add(call.get("name"), call.get("arguments"))
+                return
+
+            if "function_call" in node and isinstance(node["function_call"], dict):
+                _add(node["function_call"].get("name"), node["function_call"].get("arguments"))
+                return
+
+            if "function" in node and isinstance(node["function"], dict):
+                _add(node["function"].get("name"), node["function"].get("arguments"))
+                return
+
+            if "name" in node and "arguments" in node:
+                _add(node.get("name"), node.get("arguments"))
+                return
+
+            for value in node.values():
+                _visit(value)
+
+        _visit(payload)
+        return tool_calls
+
+    def _extract_json_payloads(self, content: str) -> list[Any]:
+        if not content:
+            return []
+        decoder = json.JSONDecoder()
+        payloads: list[Any] = []
+        idx = 0
+        length = len(content)
+        while idx < length:
+            if content[idx] != "{":
+                idx += 1
+                continue
+            try:
+                obj, end = decoder.raw_decode(content[idx:])
+            except Exception:
+                idx += 1
+                continue
+            payloads.append(obj)
+            idx += max(end, 1)
+        return payloads
 
     def _parse_tool_code_line(self, line: str) -> tuple[str | None, dict[str, Any]]:
         if "(" not in line or not line.endswith(")"):
@@ -377,15 +429,16 @@ class Orchestrator:
         if not stdout:
             return [], stdout
         images: list[dict[str, str]] = []
+        mode = os.getenv("IMAGE_RETURN_MODE", "base64").strip().lower()
 
         def _append_image(b64: str, mime: str = "image/png") -> None:
-            images.append(
-                {
-                    "mime": mime,
-                    "base64": b64,
-                    "data_url": f"data:{mime};base64,{b64}",
-                }
-            )
+            if mode in {"omit", "none"}:
+                return
+            if mode in {"hash", "short"}:
+                digest = hashlib.sha256(b64.encode("utf-8")).hexdigest()
+                images.append({"mime": mime, "sha256": digest})
+                return
+            images.append({"mime": mime, "base64": b64, "data_url": f"data:{mime};base64,{b64}"})
 
         def _replace(match: re.Match[str]) -> str:
             mime = match.group("mime") or "image/png"
