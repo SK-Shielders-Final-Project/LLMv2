@@ -166,7 +166,14 @@ def normalize_response(raw: Any) -> LlmResponse:
 
     choice = raw["choices"][0] if isinstance(raw, dict) else raw.choices[0]
     message = choice["message"] if isinstance(choice, dict) else choice.message
-    tool_calls_raw = getattr(message, "tool_calls", None) or message.get("tool_calls", [])
+    if isinstance(choice, dict) and message is None and "text" in choice:
+        message = choice.get("text")
+
+    tool_calls_raw = []
+    if isinstance(message, dict):
+        tool_calls_raw = getattr(message, "tool_calls", None) or message.get("tool_calls", [])
+    elif hasattr(message, "tool_calls"):
+        tool_calls_raw = getattr(message, "tool_calls", []) or []
 
     tool_calls: list[ToolCall] = []
     for call in tool_calls_raw:
@@ -175,6 +182,11 @@ def normalize_response(raw: Any) -> LlmResponse:
         arguments = function["arguments"] if isinstance(function, dict) else function.arguments
         tool_calls.append(ToolCall(name=name, arguments=arguments))
 
-    content = getattr(message, "content", None) if not isinstance(message, dict) else message.get("content")
+    if isinstance(message, dict):
+        content = message.get("content")
+    elif isinstance(message, str):
+        content = message
+    else:
+        content = getattr(message, "content", None)
     model = raw.get("model") if isinstance(raw, dict) else getattr(raw, "model", "unknown")
     return LlmResponse(content=content, tool_calls=tool_calls, model=model)
