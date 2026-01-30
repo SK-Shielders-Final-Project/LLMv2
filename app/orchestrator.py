@@ -290,7 +290,7 @@ class Orchestrator:
                 if not isinstance(item, dict):
                     continue
                 name = item.get("tool") or item.get("function") or item.get("name")
-                params = item.get("parameters") or item.get("params") or {}
+                params = item.get("parameters") or item.get("params") or item.get("arguments") or {}
                 if name:
                     tool_calls.append(
                         SimpleNamespace(name=name, arguments=self._normalize_params(params))
@@ -299,7 +299,7 @@ class Orchestrator:
         if not isinstance(data, dict):
             return tool_calls
 
-        actions = data.get("actions") or data.get("plan") or []
+        actions = data.get("tool_calls") or data.get("actions") or data.get("plan") or []
         if isinstance(actions, dict):
             actions = actions.get("steps", [])
         for action in actions:
@@ -313,7 +313,12 @@ class Orchestrator:
                     )
                 )
                 continue
-            name = action.get("function") or action.get("function_name") or action.get("name")
+            name = (
+                action.get("tool")
+                or action.get("function")
+                or action.get("function_name")
+                or action.get("name")
+            )
             params = action.get("parameters") or action.get("params") or action.get("arguments") or {}
             if name:
                 tool_calls.append(
