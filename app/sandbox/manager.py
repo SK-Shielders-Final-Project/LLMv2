@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
 import uuid
 from typing import Any
@@ -20,6 +21,7 @@ class SandboxManager:
     def run_code(self, code: str, packages: list[str] | None = None, timeout: int = 15) -> dict[str, Any]:
         container_name = f"sandbox_{uuid.uuid4().hex}"
         packages = packages or []
+        logger = logging.getLogger("sandbox")
 
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         install_cmd = f"pip install {' '.join(packages)} && " if packages else ""
@@ -32,6 +34,7 @@ class SandboxManager:
             "cat /tmp/user_code.py && "
             f"{exec_cmd}\""
         )
+        logger.info("Sandbox run_enabled=%s command=%s", run_enabled, full_command)
 
         container = None
         try:
