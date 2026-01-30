@@ -25,10 +25,9 @@ class SandboxManager:
         install_cmd = f"pip install {' '.join(packages)} && " if packages else ""
         full_command = (
             "sh -c \""
-            f"{install_cmd}python - <<'PY'\n"
-            "import base64\n"
-            f"exec(base64.b64decode('{encoded}').decode('utf-8'))\n"
-            "PY\""
+            f"{install_cmd}"
+            f"printf '%s' '{encoded}' | base64 -d > /tmp/user_code.py && "
+            "cat /tmp/user_code.py\""
         )
 
         container = None

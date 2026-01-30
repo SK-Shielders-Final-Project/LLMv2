@@ -111,6 +111,8 @@ class Orchestrator:
         ## 도구 실행 루프
         for call in tool_calls:
             args = self._parse_args(call.arguments)
+            if "user_id" not in args and message.user_id is not None:
+                args["user_id"] = message.user_id
             if call.name == "execute_in_sandbox":
                 code = self._build_sandbox_code(
                     code=args.get("code"),
