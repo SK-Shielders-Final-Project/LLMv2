@@ -24,7 +24,9 @@ def create_orchestrator() -> Orchestrator:
     llm_completion = build_http_completion_func()
     llm_client = LlmClient(llm_completion)
     sandbox_url = os.getenv("SANDBOX_SERVER_URL", "")
-    sandbox_client = SandboxClient(base_url=sandbox_url, timeout_seconds=20)
+    sandbox_timeout_raw = os.getenv("SANDBOX_TIMEOUT_SECONDS", "60")
+    sandbox_timeout = int(sandbox_timeout_raw) if sandbox_timeout_raw.strip() else 60
+    sandbox_client = SandboxClient(base_url=sandbox_url, timeout_seconds=sandbox_timeout)
     registry = FunctionRegistry()
     return Orchestrator(llm_client=llm_client, sandbox_client=sandbox_client, registry=registry)
 
@@ -57,4 +59,9 @@ def generate(request: GenerateRequest) -> GenerateResponse:
         result = orchestrator.handle_user_request(message)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return GenerateResponse(text=result["text"], model=result["model"], tools_used=result["tools_used"])
+    return GenerateResponse(
+        text=result["text"],
+        model=result["model"],
+        tools_used=result["tools_used"],
+        images=result.get("images", []),
+    )

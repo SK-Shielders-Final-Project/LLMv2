@@ -21,6 +21,15 @@ _BLOCKED_CODE_PATTERN = re.compile(
 )
 
 _SENSITIVE_KEYS = {"password", "card_number", "pass"}
+_IMAGE_PATTERN = re.compile(
+    r"(?:IMAGE_MIME:(?P<mime>\S+)\s*)?IMAGE_BASE64:(?P<b64>[A-Za-z0-9+/=]+)",
+    re.IGNORECASE,
+)
+_IMAGE_START_PATTERN = re.compile(
+    r"IMAGE_START:(?P<b64>[A-Za-z0-9+/=]+):IMAGE_END",
+    re.IGNORECASE,
+)
+_PLOT_KEYWORDS_PATTERN = re.compile(r"(그래프|시각화|차트|plot|chart)", re.IGNORECASE)
 _TOOL_CODE_PATTERN = re.compile(r"```tool_code\s*(.+?)```", re.DOTALL | re.IGNORECASE)
 _ACTIONS_JSON_PATTERN = re.compile(r"```json\s*(\{.+?\})\s*```", re.DOTALL | re.IGNORECASE)
 
@@ -39,7 +48,10 @@ class Orchestrator:
     def handle_user_request(self, message: LlmMessage) -> dict[str, Any]:
         logger = logging.getLogger("orchestrator")
         start = time.monotonic()
+
+        ## 시스템 프롬프트 주입
         system_prompt = build_system_context(message)
+        ## 해당 도구 사용하는 스키마
         tools = build_tool_schema()
 
         messages = [
@@ -47,6 +59,7 @@ class Orchestrator:
             {"role": "user", "content": message.content},
         ]
 
+        ## llm 실행 1차 응답
         response = self.llm_client.create_completion(messages=messages, tools=tools)
         logger.info(
             "LLM 1차 응답 elapsed=%.2fs tool_calls=%s",
@@ -54,13 +67,17 @@ class Orchestrator:
             len(response.tool_calls),
         )
 
+        ## 다른 도구들 실행 여부 확인
         tool_calls = response.tool_calls or self._extract_tool_calls(response.content or "")
 
         if not tool_calls:
             raise ValueError("LLM이 tool_calls 또는 plan JSON을 반환하지 않았습니다.")
 
+
+        ## 결과, 사용된 도구, 이미지 생성 여부를 배열로 담음
         results: list[dict[str, Any]] = []
         tools_used: list[str] = []
+        images: list[dict[str, str]] = []
 
         ## 도구 실행 루프
         for call in tool_calls:
@@ -72,45 +89,69 @@ class Orchestrator:
                     inputs=args.get("inputs"),
                     results=results,
                 )
+                logger.info(
+                    "============== [LLM GENERATED CODE] ==============\n%s\n==================================================",
+                    code,
+                )
                 self._validate_code(code)
+                required_packages = args.get("required_packages", []) or []
+                if self._needs_plot_packages(message.content):
+                    required_packages = self._ensure_packages(required_packages, ["matplotlib"])
+
+                ## 코드 실행
                 sandbox_result = self.sandbox_client.run_code(
                     code=code,
-                    required_packages=args.get("required_packages", []),
+                    required_packages=required_packages,
                 )
+
+                ## 이미지 생성
+                extracted_images, cleaned_stdout = self._extract_images_from_stdout(
+                    sandbox_result.get("stdout", "")
+                )
+                if extracted_images:
+                    images.extend(extracted_images)
+                    sandbox_result["stdout"] = cleaned_stdout
                 results.append({"tool": call.name, "result": sandbox_result})
                 tools_used.append(call.name)
                 continue
             
             result = self.registry.execute(call.name, **args)
+            ## 결과 모음
             results.append({"tool": call.name, "result": self._sanitize_payload(result)})
             tools_used.append(call.name)
 
+        final_user_content = (
+            f"사용자 요청: {message.content}\n"
+            "이제 도구 호출은 금지된다. plan/json/tool_code를 출력하지 말고 "
+            "최종 사용자 답변만 자연어로 작성하라.\n"
+            f"함수 실행 결과: {json.dumps(results, ensure_ascii=False)}"
+        )
+        ## 최종 메세지
         final_messages = [
             {"role": "system", "content": system_prompt},
-            {
-                "role": "system",
-                "content": (
-                    "이제 도구 호출은 금지된다. plan/json/tool_code를 출력하지 말고 "
-                    "최종 사용자 답변만 자연어로 작성하라."
-                ),
-            },
-            {"role": "user", "content": message.content},
-            {
-                "role": "system",
-                "content": f"함수 실행 결과: {json.dumps(results, ensure_ascii=False)}",
-            },
+            {"role": "user", "content": final_user_content},
         ]
 
+        ## LLM의 2차 응답
         final_response = self.llm_client.create_completion(messages=final_messages, tools=tools)
         logger.info(
             "LLM 최종 응답 elapsed=%.2fs",
             time.monotonic() - start,
         )
         final_text = self._sanitize_text(final_response.content or "")
+
+        ## 이미지와 응답들을 출력
+        extracted_images, cleaned_text = self._extract_images_from_stdout(final_text)
+        if extracted_images:
+            images.extend(extracted_images)
+            final_text = cleaned_text
+
+        ## 결과 반환
         return {
             "text": final_text,
             "model": final_response.model,
             "tools_used": tools_used,
+            "images": images,
         }
 
     def _parse_args(self, arguments: Any) -> dict[str, Any]:
@@ -215,9 +256,32 @@ class Orchestrator:
     ) -> str:
         payload = inputs if inputs is not None else {"results": results, "task": task}
         encoded = json.dumps(payload, ensure_ascii=False)
-        prelude = "import json\n" f"inputs = json.loads('''{encoded}''')\n"
+        prelude = (
+            "import json\n"
+            "import matplotlib\n"
+            "matplotlib.use('Agg')\n"
+            "import matplotlib.pyplot as plt\n"
+            f"inputs = json.loads('''{encoded}''')\n"
+        )
         if code:
-            return f"{prelude}\n{code}"
+            postlude = ""
+            if "IMAGE_BASE64" not in code and "IMAGE_START" not in code:
+                postlude = (
+                    "\n\ntry:\n"
+                    "    import io\n"
+                    "    import base64\n"
+                    "    import matplotlib.pyplot as plt\n"
+                    "    if plt.get_fignums():\n"
+                    "        buf = io.BytesIO()\n"
+                    "        plt.tight_layout()\n"
+                    "        plt.savefig(buf, format='png')\n"
+                    "        buf.seek(0)\n"
+                    "        img_base64 = base64.b64encode(buf.read()).decode('utf-8')\n"
+                    "        print(f\"IMAGE_START:{img_base64}:IMAGE_END\")\n"
+                    "except Exception as e:\n"
+                    "    print(f\"GRAPH_ERROR:{e}\")\n"
+                )
+            return f"{prelude}\n{code}{postlude}"
         return f"{prelude}\nprint(json.dumps(inputs, ensure_ascii=False))"
 
     def _validate_code(self, code: str) -> None:
@@ -235,3 +299,42 @@ class Orchestrator:
         for key in _SENSITIVE_KEYS:
             text = re.sub(fr"{key}\s*:\s*\S+", f"{key}: ***", text, flags=re.IGNORECASE)
         return text
+
+    def _needs_plot_packages(self, text: str) -> bool:
+        return bool(_PLOT_KEYWORDS_PATTERN.search(text or ""))
+
+    def _ensure_packages(self, packages: list[str], required: list[str]) -> list[str]:
+        normalized = {pkg.lower() for pkg in packages}
+        merged = list(packages)
+        for pkg in required:
+            if pkg.lower() not in normalized:
+                merged.append(pkg)
+                normalized.add(pkg.lower())
+        return merged
+
+    def _extract_images_from_stdout(self, stdout: str) -> tuple[list[dict[str, str]], str]:
+        if not stdout:
+            return [], stdout
+        images: list[dict[str, str]] = []
+
+        def _append_image(b64: str, mime: str = "image/png") -> None:
+            images.append(
+                {
+                    "mime": mime,
+                    "base64": b64,
+                    "data_url": f"data:{mime};base64,{b64}",
+                }
+            )
+
+        def _replace(match: re.Match[str]) -> str:
+            mime = match.group("mime") or "image/png"
+            _append_image(match.group("b64"), mime=mime)
+            return "[image omitted]"
+
+        def _replace_start(match: re.Match[str]) -> str:
+            _append_image(match.group("b64"))
+            return "[image omitted]"
+
+        cleaned = _IMAGE_PATTERN.sub(_replace, stdout)
+        cleaned = _IMAGE_START_PATTERN.sub(_replace_start, cleaned)
+        return images, cleaned
