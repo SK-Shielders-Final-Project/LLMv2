@@ -1,35 +1,66 @@
+import os
+
 from app.schema import LlmMessage
 
 
 SYSTEM_PROMPT = (
-    "너는 함수 오케스트레이터다. "
-    "요청에 필요한 함수만 호출하고, 통계/시각화는 execute_in_sandbox로 처리한다. "
-    "응답은 한국어로 작성하며 민감정보/시스템정보는 노출하지 않는다."
+    "너는 함수 오케스트레이터다. 필요한 함수만 호출하고, "
+    "통계/시각화는 execute_in_sandbox로 처리한다. "
+    "응답은 한국어로 작성하고 민감정보/시스템정보는 노출하지 않는다. "
+    "tool_calls 또는 plan JSON으로만 응답한다."
 )
 
 
 def build_system_context(message: LlmMessage) -> str:
+    max_tokens = _get_system_prompt_max_tokens()
+    prompt = _truncate_by_tokens(SYSTEM_PROMPT, max_tokens)
     return (
-        f"{SYSTEM_PROMPT}\n"
+        f"{prompt}\n"
         f"UserId: {message.user_id}\n"
         "Locale: ko\n"
-        "필요한 정보가 있으면 적절한 도구를 호출하세요.\n"
-        "사용자 정보/프로필 요청: get_user_profile 호출.\n"
-        "결제 내역 요청: get_payments 호출.\n"
-        "이용 내역 요청: get_rentals 호출.\n"
-        "요금 요약 요청: get_pricing_summary 호출.\n"
-        "이용 요약 요청: get_usage_summary 호출.\n"
-        "자전거 목록 요청: get_available_bikes 호출.\n"
-        "공지사항 요청: get_notices 호출.\n"
-        "문의 내역 요청: get_inquiries 호출.\n"
-        "전체 결제 내역 요청: get_total_payments 호출.\n"
-        "전체 사용 내역 요청: get_total_usage 호출.\n"
-        "통계/시각화/결합 연산 필요 시: execute_in_sandbox 호출.\n"
+        "필요한 함수들을 호출해 최종 응답을 생성하라.\n"
     )
 
 
+def _get_system_prompt_max_tokens() -> int:
+    raw = os.getenv("SYSTEM_PROMPT_MAX_TOKENS", "4000").strip()
+    try:
+        return max(200, int(raw))
+    except ValueError:
+        return 4000
+
+
+def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    # Rough heuristic: 1 token ~= 4 chars
+    return max(1, len(text) // 4)
+
+
+def _truncate_by_tokens(text: str, max_tokens: int) -> str:
+    if _estimate_tokens(text) <= max_tokens:
+        return text
+    max_chars = max_tokens * 4
+    return text[:max_chars]
+
+
+def _filter_tool_schema(schema: list[dict]) -> list[dict]:
+    allowlist_raw = os.getenv("TOOL_SCHEMA_ALLOWLIST", "").strip()
+    if not allowlist_raw:
+        return schema
+    allowlist = {item.strip() for item in allowlist_raw.split(",") if item.strip()}
+    if not allowlist:
+        return schema
+    filtered: list[dict] = []
+    for item in schema:
+        name = item.get("function", {}).get("name")
+        if name in allowlist:
+            filtered.append(item)
+    return filtered
+
+
 def build_tool_schema() -> list[dict]:
-    return [
+    schema = [
         {
             "type": "function",
             "function": {
@@ -200,3 +231,4 @@ def build_tool_schema() -> list[dict]:
             },
         },
     ]
+    return _filter_tool_schema(schema)
