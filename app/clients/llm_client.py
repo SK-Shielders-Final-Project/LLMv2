@@ -70,6 +70,12 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
             "max_tokens": max_tokens,
             "stream": False,
         }
+        logger.info(
+            "LLM 요청 전송 messages=%s tools=%s endpoint=%s",
+            json.dumps(messages, ensure_ascii=False),
+            json.dumps(tools or [], ensure_ascii=False),
+            endpoint,
+        )
         data = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if api_key:
