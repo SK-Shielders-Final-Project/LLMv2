@@ -114,9 +114,13 @@ class Orchestrator:
             if "user_id" not in args and message.user_id is not None:
                 args["user_id"] = message.user_id
             if call.name == "execute_in_sandbox":
+                task = args.get("task") or args.get("description") or args.get("query")
+                code = args.get("code")
+                if not code:
+                    code = self._generate_sandbox_code(task=task, inputs=args.get("inputs"), results=results)
                 code = self._build_sandbox_code(
-                    code=args.get("code"),
-                    task=args.get("task"),
+                    code=code,
+                    task=task,
                     inputs=args.get("inputs"),
                     results=results,
                 )
@@ -187,6 +191,37 @@ class Orchestrator:
             "tools_used": tools_used,
             "images": images,
         }
+
+    def _generate_sandbox_code(
+        self,
+        task: str | None,
+        inputs: dict[str, Any] | None,
+        results: list[dict[str, Any]],
+    ) -> str:
+        if not task:
+            return "import json\nprint(json.dumps(inputs, ensure_ascii=False))"
+
+        system_prompt = (
+            "너는 Python 코드 생성기다. "
+            "이미 변수 inputs(dict)가 존재한다고 가정하고 이를 활용한다. "
+            "시각화 요청이면 matplotlib로 그래프를 그리고, "
+            "이미지 저장 코드는 넣지 말라(호스트가 자동으로 처리한다). "
+            "설명/주석/코드블록 없이 Python 코드만 출력하라."
+        )
+        payload = inputs if inputs is not None else {"results": results, "task": task}
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"작업: {task}\n"
+                    f"inputs: {json.dumps(payload, ensure_ascii=False)}"
+                ),
+            },
+        ]
+        response = self.llm_client.create_completion(messages=messages, tools=[])
+        raw_code = response.content or ""
+        return self._strip_code_fences(raw_code).strip() or "import json\nprint(json.dumps(inputs, ensure_ascii=False))"
 
     def _parse_args(self, arguments: Any) -> dict[str, Any]:
         if isinstance(arguments, dict):
@@ -389,6 +424,8 @@ class Orchestrator:
             compact = key.replace("_", "").lower()
             if compact == "userid":
                 return "user_id"
+            if compact in {"desc", "description", "query"}:
+                return "task"
             return key
 
         def _normalize_value(value: Any) -> Any:
@@ -407,6 +444,13 @@ class Orchestrator:
             return value
 
         return { _normalize_key(k): _normalize_value(v) for k, v in params.items() }
+
+    def _strip_code_fences(self, text: str) -> str:
+        if not text:
+            return text
+        cleaned = re.sub(r"```(?:python)?\s*", "", text, flags=re.IGNORECASE)
+        cleaned = cleaned.replace("```", "")
+        return cleaned
 
     def _build_sandbox_code(
         self,
