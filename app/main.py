@@ -16,7 +16,7 @@ from app.schema import GenerateRequest, GenerateResponse, LlmMessage
 
 app = FastAPI(title="LLM Orchestrator API")
 
-load_dotenv()
+load_dotenv(override=True)
 app.include_router(registry_router, prefix="/tools")
 
 

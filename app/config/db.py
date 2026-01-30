@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from contextlib import contextmanager
+from threading import Lock
 from datetime import date, datetime
 from typing import Any, Iterable
 
@@ -14,6 +15,10 @@ except Exception as exc:  # pragma: no cover - 런타임 환경에서 확인
     _oracle_import_error = exc
 else:
     _oracle_import_error = None
+
+
+_pool = None
+_pool_lock = Lock()
 
 
 def _get_dsn() -> str:
@@ -47,19 +52,53 @@ def get_connection() -> Iterable[Any]:
     logger = logging.getLogger("db")
     connect_timeout = int(os.getenv("ORACLE_CONNECT_TIMEOUT_SECONDS", "5") or "5")
     call_timeout_ms = int(os.getenv("ORACLE_CALL_TIMEOUT_MS", "10000") or "10000")
+    pool_enabled = os.getenv("ORACLE_POOL_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
+    pool_min = int(os.getenv("ORACLE_POOL_MIN", "1") or "1")
+    pool_max = int(os.getenv("ORACLE_POOL_MAX", "5") or "5")
+    pool_inc = int(os.getenv("ORACLE_POOL_INCREMENT", "1") or "1")
     start = time.monotonic()
     dsn = _get_dsn()
+
     try:
-        try:
-            conn = oracledb.connect(
-                user=user,
-                password=password,
-                dsn=dsn,
-                timeout=connect_timeout,
-            )
-        except TypeError:
-            logger.warning("oracledb.connect가 timeout 인자를 지원하지 않습니다. 기본값으로 연결합니다.")
-            conn = oracledb.connect(user=user, password=password, dsn=dsn)
+        if pool_enabled:
+            global _pool
+            if _pool is None:
+                with _pool_lock:
+                    if _pool is None:
+                        try:
+                            _pool = oracledb.SessionPool(
+                                user=user,
+                                password=password,
+                                dsn=dsn,
+                                min=pool_min,
+                                max=pool_max,
+                                increment=pool_inc,
+                                timeout=connect_timeout,
+                            )
+                        except TypeError:
+                            logger.warning(
+                                "oracledb.SessionPool이 timeout 인자를 지원하지 않습니다. 기본값으로 생성합니다."
+                            )
+                            _pool = oracledb.SessionPool(
+                                user=user,
+                                password=password,
+                                dsn=dsn,
+                                min=pool_min,
+                                max=pool_max,
+                                increment=pool_inc,
+                            )
+            conn = _pool.acquire()
+        else:
+            try:
+                conn = oracledb.connect(
+                    user=user,
+                    password=password,
+                    dsn=dsn,
+                    timeout=connect_timeout,
+                )
+            except TypeError:
+                logger.warning("oracledb.connect가 timeout 인자를 지원하지 않습니다. 기본값으로 연결합니다.")
+                conn = oracledb.connect(user=user, password=password, dsn=dsn)
     except Exception as exc:
         logger.error(
             "DB 연결 실패 error=%s dsn=%s user=%s connect_timeout=%s call_timeout_ms=%s",
@@ -70,11 +109,16 @@ def get_connection() -> Iterable[Any]:
             call_timeout_ms,
         )
         raise
-    conn.call_timeout = call_timeout_ms
+
+    try:
+        conn.call_timeout = call_timeout_ms
+    except Exception:
+        logger.debug("DB call_timeout 설정을 지원하지 않습니다.")
     logger.info(
-        "DB 연결 성공 elapsed=%.2fs call_timeout_ms=%s",
+        "DB 연결 성공 elapsed=%.2fs call_timeout_ms=%s pool=%s",
         time.monotonic() - start,
         call_timeout_ms,
+        "on" if pool_enabled else "off",
     )
     try:
         yield conn
