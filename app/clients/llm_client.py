@@ -161,6 +161,7 @@ def normalize_response(raw: Any) -> LlmResponse:
     OpenAI 호환 응답 구조를 최소한으로 정규화한다.
     raw.choices[0].message.tool_calls 형태를 기대한다.
     """
+    logger = logging.getLogger("llm_client")
     if raw is None:
         raise RuntimeError("LLM 응답이 없습니다.")
 
@@ -168,6 +169,13 @@ def normalize_response(raw: Any) -> LlmResponse:
     message = choice["message"] if isinstance(choice, dict) else choice.message
     if isinstance(choice, dict) and message is None and "text" in choice:
         message = choice.get("text")
+
+    logger.info(
+        "LLM normalize_response types raw=%s choice=%s message=%s",
+        type(raw).__name__,
+        type(choice).__name__,
+        type(message).__name__,
+    )
 
     tool_calls_raw = []
     if isinstance(message, dict):
