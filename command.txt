@@ -9,3 +9,11 @@ pip3 freeze > tool.txt
 pip3 install -r tool.txt
 
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+
+
+cd /home/ec2-user/LLMv2
+set -a
+source .env
+set +a
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000

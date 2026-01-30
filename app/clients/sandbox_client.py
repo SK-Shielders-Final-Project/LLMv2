@@ -8,6 +8,7 @@ from typing import Any
 
 import docker
 from docker.errors import DockerException
+import paramiko
 
 class SandboxClient:
     """
@@ -21,6 +22,10 @@ class SandboxClient:
         self.exec_container = os.getenv("SANDBOX_EXEC_CONTAINER")
         self.inner_exec_container = os.getenv("SANDBOX_INNER_CONTAINER")
         self.exec_workdir = os.getenv("SANDBOX_EXEC_WORKDIR", "/")
+        self.ssh_host = os.getenv("SANDBOX_REMOTE_HOST")
+        self.ssh_port = int(os.getenv("SANDBOX_REMOTE_PORT", "22"))
+        self.ssh_user = os.getenv("SANDBOX_REMOTE_USER", "ec2-user")
+        self.ssh_key_path = os.getenv("SANDBOX_REMOTE_KEY_PATH")
 
     def run_code(self, code: str, required_packages: list[str] | None = None) -> dict[str, Any]:
         if self.exec_container:
@@ -46,6 +51,8 @@ class SandboxClient:
             client = docker.from_env()
             container = client.containers.get(self.exec_container)
         except (DockerException, FileNotFoundError) as exc:
+            if self.ssh_host:
+                return self._run_via_ssh_exec(code=code, required_packages=required_packages)
             raise RuntimeError(
                 "Docker 소켓에 접근할 수 없습니다. "
                 "호스트에서 docker 데몬이 실행 중인지, "
@@ -65,3 +72,41 @@ class SandboxClient:
         stdout = result.output.decode("utf-8", errors="replace") if hasattr(result, "output") else ""
         exit_code = getattr(result, "exit_code", 0)
         return {"exit_code": exit_code, "stdout": stdout}
+
+    def _run_via_ssh_exec(self, code: str, required_packages: list[str]) -> dict[str, Any]:
+        if not self.ssh_key_path:
+            raise RuntimeError("SANDBOX_REMOTE_KEY_PATH가 설정되지 않았습니다.")
+
+        encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
+        install_cmd = f"pip install {' '.join(required_packages)} && " if required_packages else ""
+        inner_prefix = f"docker exec {self.inner_exec_container} " if self.inner_exec_container else ""
+        command = (
+            f"docker exec {self.exec_container} "
+            f"{inner_prefix}bash -lc \""
+            f"{install_cmd}python - <<'PY'\n"
+            "import base64\n"
+            f"exec(base64.b64decode('{encoded}').decode('utf-8'))\n"
+            "PY\""
+        )
+
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        key = paramiko.RSAKey.from_private_key_file(self.ssh_key_path)
+        ssh.connect(
+            hostname=self.ssh_host,
+            port=self.ssh_port,
+            username=self.ssh_user,
+            pkey=key,
+            timeout=self.timeout_seconds,
+        )
+        try:
+            stdin, stdout, stderr = ssh.exec_command(command, timeout=self.timeout_seconds)
+            exit_code = stdout.channel.recv_exit_status()
+            output = stdout.read().decode("utf-8", errors="replace").strip()
+            error = stderr.read().decode("utf-8", errors="replace").strip()
+            payload: dict[str, Any] = {"exit_code": exit_code, "stdout": output}
+            if error:
+                payload["stderr"] = error
+            return payload
+        finally:
+            ssh.close()
