@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import time
@@ -160,4 +161,15 @@ def _row_to_dict(columns: list[str], row: tuple[Any, ...]) -> dict[str, Any]:
 def _normalize_value(value: Any) -> Any:
     if isinstance(value, (datetime, date)):
         return value.isoformat()
+    if oracledb is not None:
+        try:
+            if isinstance(value, oracledb.LOB):
+                value = value.read()
+        except Exception:
+            return None
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return base64.b64encode(value).decode("ascii")
     return value
