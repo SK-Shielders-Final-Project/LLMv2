@@ -104,20 +104,15 @@ class Orchestrator:
             results.append({"tool": call.name, "result": self._sanitize_payload(result)})
             tools_used.append(call.name)
 
+        final_user_content = (
+            f"사용자 요청: {message.content}\n"
+            "이제 도구 호출은 금지된다. plan/json/tool_code를 출력하지 말고 "
+            "최종 사용자 답변만 자연어로 작성하라.\n"
+            f"함수 실행 결과: {json.dumps(results, ensure_ascii=False)}"
+        )
         final_messages = [
             {"role": "system", "content": system_prompt},
-            {
-                "role": "system",
-                "content": (
-                    "이제 도구 호출은 금지된다. plan/json/tool_code를 출력하지 말고 "
-                    "최종 사용자 답변만 자연어로 작성하라."
-                ),
-            },
-            {"role": "user", "content": message.content},
-            {
-                "role": "system",
-                "content": f"함수 실행 결과: {json.dumps(results, ensure_ascii=False)}",
-            },
+            {"role": "user", "content": final_user_content},
         ]
 
         final_response = self.llm_client.create_completion(messages=final_messages, tools=tools)
@@ -126,6 +121,10 @@ class Orchestrator:
             time.monotonic() - start,
         )
         final_text = self._sanitize_text(final_response.content or "")
+        extracted_images, cleaned_text = self._extract_images_from_stdout(final_text)
+        if extracted_images:
+            images.extend(extracted_images)
+            final_text = cleaned_text
         return {
             "text": final_text,
             "model": final_response.model,
