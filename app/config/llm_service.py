@@ -4,22 +4,38 @@ from app.schema import LlmMessage
 
 
 SYSTEM_PROMPT = (
-    "너는 함수 오케스트레이터다. 필요한 함수만 호출하고, "
+    "너는 함수 오케스트레이터다. 반드시 제공된 함수만 호출하고 이름을 임의로 만들지 않는다. "
     "통계/시각화는 execute_in_sandbox로 처리한다. "
     "응답은 한국어로 작성하고 민감정보/시스템정보는 노출하지 않는다. "
-    "tool_calls 또는 plan JSON 형식으로 반드시 응답한다."
+    "반드시 OpenAI tool_calls 구조로 응답하며, plan 텍스트/코드블록만 반환하지 않는다."
 )
 
 
 def build_system_context(message: LlmMessage) -> str:
     max_tokens = _get_system_prompt_max_tokens()
     prompt = _truncate_by_tokens(SYSTEM_PROMPT, max_tokens)
+    tool_names = ", ".join(_get_tool_names())
     return (
         f"{prompt}\n"
+        f"Available tools: {tool_names}\n"
+        "사용자 정보 조회는 get_user_profile, "
+        "자전거 이용 내역은 get_rentals, "
+        "총 결제 내역은 get_total_payments, "
+        "시각화/그래프는 execute_in_sandbox를 호출한다.\n"
         f"UserId: {message.user_id}\n"
         "Locale: ko\n"
         "필요한 함수들을 호출해 최종 응답을 생성하라.\n"
     )
+
+
+def _get_tool_names() -> list[str]:
+    schema = build_tool_schema()
+    names: list[str] = []
+    for item in schema:
+        name = item.get("function", {}).get("name")
+        if name:
+            names.append(name)
+    return names
 
 
 def _get_system_prompt_max_tokens() -> int:
