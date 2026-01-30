@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 
 from app.clients.llm_client import LlmClient, build_http_completion_func
 from app.clients.sandbox_client import SandboxClient
@@ -57,6 +58,20 @@ orchestrator = create_orchestrator()
 def list_functions() -> dict[str, list[str]]:
     """LLM이 호출 가능한 함수 목록을 반환합니다."""
     return {"functions": orchestrator.registry.list_functions()}
+
+
+def _get_image_storage_dir() -> str:
+    base_dir = os.path.dirname(__file__)
+    return os.getenv("IMAGE_STORAGE_DIR", os.path.join(base_dir, "log", "img"))
+
+
+@app.get("/images/{image_name}")
+def get_image(image_name: str) -> FileResponse:
+    image_dir = _get_image_storage_dir()
+    image_path = os.path.join(image_dir, image_name)
+    if not os.path.exists(image_path):
+        raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다.")
+    return FileResponse(image_path)
 
 
 @app.post("/api/generate", response_model=GenerateResponse)

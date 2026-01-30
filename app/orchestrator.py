@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
 import os
 import re
 import time
+import uuid
 from types import SimpleNamespace
 from typing import Any
 
@@ -569,16 +571,25 @@ class Orchestrator:
         if not stdout:
             return [], stdout
         images: list[dict[str, str]] = []
-        mode = os.getenv("IMAGE_RETURN_MODE", "base64").strip().lower()
+        mode = os.getenv("IMAGE_RETURN_MODE", "url").strip().lower()
 
         def _append_image(b64: str, mime: str = "image/png") -> None:
             if mode in {"omit", "none"}:
                 return
-            if mode in {"hash", "short"}:
-                digest = hashlib.sha256(b64.encode("utf-8")).hexdigest()
-                images.append({"mime": mime, "sha256": digest})
+            file_name = self._save_image_to_disk(b64, mime=mime)
+            if not file_name:
                 return
-            images.append({"mime": mime, "base64": b64, "data_url": f"data:{mime};base64,{b64}"})
+            digest = hashlib.sha256(b64.encode("utf-8")).hexdigest()
+            url = f"/images/{file_name}"
+            if mode in {"hash", "short"}:
+                images.append({"mime": mime, "sha256": digest, "url": url})
+                return
+            if mode == "base64":
+                images.append(
+                    {"mime": mime, "base64": b64, "data_url": f"data:{mime};base64,{b64}", "url": url}
+                )
+                return
+            images.append({"mime": mime, "sha256": digest, "url": url})
 
         def _replace(match: re.Match[str]) -> str:
             mime = match.group("mime") or "image/png"
@@ -592,3 +603,20 @@ class Orchestrator:
         cleaned = _IMAGE_PATTERN.sub(_replace, stdout)
         cleaned = _IMAGE_START_PATTERN.sub(_replace_start, cleaned)
         return images, cleaned
+
+    def _save_image_to_disk(self, b64: str, mime: str) -> str | None:
+        try:
+            raw = base64.b64decode(b64)
+        except Exception:
+            return None
+        ext = "png"
+        if "/" in mime:
+            ext = mime.split("/", 1)[1] or "png"
+        base_dir = os.path.dirname(__file__)
+        storage_dir = os.getenv("IMAGE_STORAGE_DIR", os.path.join(base_dir, "log", "img"))
+        os.makedirs(storage_dir, exist_ok=True)
+        file_name = f"{uuid.uuid4().hex}.{ext}"
+        path = os.path.join(storage_dir, file_name)
+        with open(path, "wb") as f:
+            f.write(raw)
+        return file_name
