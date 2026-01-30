@@ -26,9 +26,12 @@ class SandboxClient:
         self.ssh_port = int(os.getenv("SANDBOX_REMOTE_PORT", "22"))
         self.ssh_user = os.getenv("SANDBOX_REMOTE_USER", "ec2-user")
         self.ssh_key_path = os.getenv("SANDBOX_REMOTE_KEY_PATH")
+        self.force_ssh = os.getenv("SANDBOX_FORCE_SSH", "").strip().lower() in {"1", "true", "yes"}
 
     def run_code(self, code: str, required_packages: list[str] | None = None) -> dict[str, Any]:
         if self.exec_container:
+            if self.force_ssh:
+                return self._run_via_ssh_exec(code=code, required_packages=required_packages or [])
             return self._run_via_exec(code=code, required_packages=required_packages or [])
         if not self.base_url:
             raise RuntimeError("SANDBOX_SERVER_URL 또는 SANDBOX_EXEC_CONTAINER가 필요합니다.")

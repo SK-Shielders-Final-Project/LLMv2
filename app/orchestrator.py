@@ -61,6 +61,8 @@ class Orchestrator:
 
         ## llm 실행 1차 응답
         response = self.llm_client.create_completion(messages=messages, tools=tools)
+        ## LLM이 Tool을 요청하거나 Plan JSON형식으로 전달
+
         logger.info(
             "LLM 1차 응답 elapsed=%.2fs tool_calls=%s",
             time.monotonic() - start,
