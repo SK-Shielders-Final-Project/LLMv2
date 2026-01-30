@@ -51,7 +51,7 @@ class SandboxManager:
         finally:
             if container is not None:
                 try:
-                    container.remove(force=True)
+                    container.remove(force=False)
                 except Exception:
                     pass
 

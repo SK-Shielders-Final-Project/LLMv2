@@ -57,4 +57,9 @@ def generate(request: GenerateRequest) -> GenerateResponse:
         result = orchestrator.handle_user_request(message)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return GenerateResponse(text=result["text"], model=result["model"], tools_used=result["tools_used"])
+    return GenerateResponse(
+        text=result["text"],
+        model=result["model"],
+        tools_used=result["tools_used"],
+        images=result.get("images", []),
+    )

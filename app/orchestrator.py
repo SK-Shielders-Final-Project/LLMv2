@@ -21,6 +21,10 @@ _BLOCKED_CODE_PATTERN = re.compile(
 )
 
 _SENSITIVE_KEYS = {"password", "card_number", "pass"}
+_IMAGE_PATTERN = re.compile(
+    r"(?:IMAGE_MIME:(?P<mime>\S+)\s*)?IMAGE_BASE64:(?P<b64>[A-Za-z0-9+/=]+)",
+    re.IGNORECASE,
+)
 _TOOL_CODE_PATTERN = re.compile(r"```tool_code\s*(.+?)```", re.DOTALL | re.IGNORECASE)
 _ACTIONS_JSON_PATTERN = re.compile(r"```json\s*(\{.+?\})\s*```", re.DOTALL | re.IGNORECASE)
 
@@ -61,6 +65,7 @@ class Orchestrator:
 
         results: list[dict[str, Any]] = []
         tools_used: list[str] = []
+        images: list[dict[str, str]] = []
 
         ## 도구 실행 루프
         for call in tool_calls:
@@ -77,6 +82,12 @@ class Orchestrator:
                     code=code,
                     required_packages=args.get("required_packages", []),
                 )
+                extracted_images, cleaned_stdout = self._extract_images_from_stdout(
+                    sandbox_result.get("stdout", "")
+                )
+                if extracted_images:
+                    images.extend(extracted_images)
+                    sandbox_result["stdout"] = cleaned_stdout
                 results.append({"tool": call.name, "result": sandbox_result})
                 tools_used.append(call.name)
                 continue
@@ -111,6 +122,7 @@ class Orchestrator:
             "text": final_text,
             "model": final_response.model,
             "tools_used": tools_used,
+            "images": images,
         }
 
     def _parse_args(self, arguments: Any) -> dict[str, Any]:
@@ -235,3 +247,16 @@ class Orchestrator:
         for key in _SENSITIVE_KEYS:
             text = re.sub(fr"{key}\s*:\s*\S+", f"{key}: ***", text, flags=re.IGNORECASE)
         return text
+
+    def _extract_images_from_stdout(self, stdout: str) -> tuple[list[dict[str, str]], str]:
+        if not stdout:
+            return [], stdout
+        images: list[dict[str, str]] = []
+
+        def _replace(match: re.Match[str]) -> str:
+            mime = match.group("mime") or "image/png"
+            images.append({"mime": mime, "base64": match.group("b64")})
+            return "[image omitted]"
+
+        cleaned = _IMAGE_PATTERN.sub(_replace, stdout)
+        return images, cleaned
