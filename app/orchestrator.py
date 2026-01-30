@@ -48,7 +48,10 @@ class Orchestrator:
     def handle_user_request(self, message: LlmMessage) -> dict[str, Any]:
         logger = logging.getLogger("orchestrator")
         start = time.monotonic()
+
+        ## 시스템 프롬프트 주입
         system_prompt = build_system_context(message)
+        ## 해당 도구 사용하는 스키마
         tools = build_tool_schema()
 
         messages = [
@@ -56,6 +59,7 @@ class Orchestrator:
             {"role": "user", "content": message.content},
         ]
 
+        ## llm 실행 1차 응답
         response = self.llm_client.create_completion(messages=messages, tools=tools)
         logger.info(
             "LLM 1차 응답 elapsed=%.2fs tool_calls=%s",
@@ -63,11 +67,14 @@ class Orchestrator:
             len(response.tool_calls),
         )
 
+        ## 다른 도구들 실행 여부 확인
         tool_calls = response.tool_calls or self._extract_tool_calls(response.content or "")
 
         if not tool_calls:
             raise ValueError("LLM이 tool_calls 또는 plan JSON을 반환하지 않았습니다.")
 
+
+        ## 결과, 사용된 도구, 이미지 생성 여부를 배열로 담음
         results: list[dict[str, Any]] = []
         tools_used: list[str] = []
         images: list[dict[str, str]] = []
@@ -90,10 +97,14 @@ class Orchestrator:
                 required_packages = args.get("required_packages", []) or []
                 if self._needs_plot_packages(message.content):
                     required_packages = self._ensure_packages(required_packages, ["matplotlib"])
+
+                ## 코드 실행
                 sandbox_result = self.sandbox_client.run_code(
                     code=code,
                     required_packages=required_packages,
                 )
+
+                ## 이미지 생성
                 extracted_images, cleaned_stdout = self._extract_images_from_stdout(
                     sandbox_result.get("stdout", "")
                 )
@@ -105,6 +116,7 @@ class Orchestrator:
                 continue
             
             result = self.registry.execute(call.name, **args)
+            ## 결과 모음
             results.append({"tool": call.name, "result": self._sanitize_payload(result)})
             tools_used.append(call.name)
 
@@ -114,21 +126,27 @@ class Orchestrator:
             "최종 사용자 답변만 자연어로 작성하라.\n"
             f"함수 실행 결과: {json.dumps(results, ensure_ascii=False)}"
         )
+        ## 최종 메세지
         final_messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": final_user_content},
         ]
 
+        ## LLM의 2차 응답
         final_response = self.llm_client.create_completion(messages=final_messages, tools=tools)
         logger.info(
             "LLM 최종 응답 elapsed=%.2fs",
             time.monotonic() - start,
         )
         final_text = self._sanitize_text(final_response.content or "")
+
+        ## 이미지와 응답들을 출력
         extracted_images, cleaned_text = self._extract_images_from_stdout(final_text)
         if extracted_images:
             images.extend(extracted_images)
             final_text = cleaned_text
+
+        ## 결과 반환
         return {
             "text": final_text,
             "model": final_response.model,
