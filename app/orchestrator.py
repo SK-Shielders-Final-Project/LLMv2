@@ -176,7 +176,17 @@ class Orchestrator:
         if isinstance(arguments, dict):
             return arguments
         if isinstance(arguments, str):
-            return json.loads(arguments)
+            parsed: Any = json.loads(arguments)
+            if isinstance(parsed, str):
+                trimmed = parsed.strip()
+                if (trimmed.startswith("{") and trimmed.endswith("}")) or (
+                    trimmed.startswith("[") and trimmed.endswith("]")
+                ):
+                    try:
+                        parsed = json.loads(trimmed)
+                    except Exception:
+                        return {}
+            return parsed if isinstance(parsed, dict) else {}
         raise ValueError("Tool arguments 형식이 올바르지 않습니다.")
 
     def _extract_tool_calls(self, content: str) -> list[Any]:
@@ -223,6 +233,8 @@ class Orchestrator:
             return tool_calls
         if isinstance(data, list):
             for item in data:
+                if not isinstance(item, dict):
+                    continue
                 name = item.get("tool") or item.get("function") or item.get("name")
                 params = item.get("parameters") or item.get("params") or {}
                 if name:
@@ -235,6 +247,8 @@ class Orchestrator:
         if isinstance(actions, dict):
             actions = actions.get("steps", [])
         for action in actions:
+            if not isinstance(action, dict):
+                continue
             if action.get("action") == "execute_in_sandbox":
                 tool_calls.append(
                     SimpleNamespace(
