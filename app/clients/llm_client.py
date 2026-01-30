@@ -97,6 +97,7 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
                     len(tools or []),
                     endpoint,
                 )
+                logger.info("LLM raw 응답=%s", json.dumps(data, ensure_ascii=False))
                 return data
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")

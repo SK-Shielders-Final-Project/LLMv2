@@ -86,6 +86,19 @@ class Orchestrator:
         tool_calls = response.tool_calls or self._extract_tool_calls(response.content or "")
 
         if not tool_calls:
+            fallback_text = self._sanitize_text(response.content or "")
+            logger.warning(
+                "LLM tool_calls 누락: fallback_response_used=%s content=%s",
+                bool(fallback_text),
+                fallback_text,
+            )
+            if fallback_text:
+                return {
+                    "text": fallback_text,
+                    "model": response.model,
+                    "tools_used": [],
+                    "images": [],
+                }
             raise ValueError("LLM이 tool_calls 또는 plan JSON을 반환하지 않았습니다.")
 
 
