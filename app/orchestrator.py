@@ -82,6 +82,10 @@ class Orchestrator:
                     inputs=args.get("inputs"),
                     results=results,
                 )
+                logger.info(
+                    "============== [LLM GENERATED CODE] ==============\n%s\n==================================================",
+                    code,
+                )
                 self._validate_code(code)
                 required_packages = args.get("required_packages", []) or []
                 if self._needs_plot_packages(message.content):
