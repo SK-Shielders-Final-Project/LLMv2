@@ -66,10 +66,10 @@ class SandboxClient:
         inner_prefix = f"docker exec {self.inner_exec_container} " if self.inner_exec_container else ""
         command = (
             "bash -lc \""
-            f"{inner_prefix}{install_cmd}python - <<'PY'\n"
-            "import base64\n"
-            f"exec(base64.b64decode('{encoded}').decode('utf-8'))\n"
-            "PY\""
+            f"{inner_prefix}{install_cmd}"
+            f"printf '%s' '{encoded}' | base64 -d > /tmp/user_code.py && "
+            "cat /tmp/user_code.py && "
+            "python /tmp/user_code.py\""
         )
         result = container.exec_run(command, workdir=self.exec_workdir)
         stdout = result.output.decode("utf-8", errors="replace") if hasattr(result, "output") else ""
@@ -86,10 +86,10 @@ class SandboxClient:
         command = (
             f"docker exec {self.exec_container} "
             f"{inner_prefix}bash -lc \""
-            f"{install_cmd}python - <<'PY'\n"
-            "import base64\n"
-            f"exec(base64.b64decode('{encoded}').decode('utf-8'))\n"
-            "PY\""
+            f"{install_cmd}"
+            f"printf '%s' '{encoded}' | base64 -d > /tmp/user_code.py && "
+            "cat /tmp/user_code.py && "
+            "python /tmp/user_code.py\""
         )
 
         ssh = paramiko.SSHClient()

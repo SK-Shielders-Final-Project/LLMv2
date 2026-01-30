@@ -115,6 +115,8 @@ class Orchestrator:
                 args["user_id"] = message.user_id
             if call.name == "execute_in_sandbox":
                 task = args.get("task") or args.get("description") or args.get("query")
+                if not task:
+                    task = self._build_task_from_args(args)
                 code = args.get("code")
                 if not code:
                     code = self._generate_sandbox_code(task=task, inputs=args.get("inputs"), results=results)
@@ -222,6 +224,25 @@ class Orchestrator:
         response = self.llm_client.create_completion(messages=messages, tools=[])
         raw_code = response.content or ""
         return self._strip_code_fences(raw_code).strip() or "import json\nprint(json.dumps(inputs, ensure_ascii=False))"
+
+    def _build_task_from_args(self, args: dict[str, Any]) -> str | None:
+        title = args.get("title")
+        vis_type = args.get("visualization_type") or args.get("type")
+        x_label = args.get("x_axis_label") or args.get("x_axis")
+        y_label = args.get("y_axis_label") or args.get("y_axis")
+        data_source = args.get("data_source") or args.get("data")
+        parts = []
+        if vis_type:
+            parts.append(f"{vis_type} 그래프")
+        if title:
+            parts.append(f"제목: {title}")
+        if x_label:
+            parts.append(f"x축: {x_label}")
+        if y_label:
+            parts.append(f"y축: {y_label}")
+        if data_source:
+            parts.append(f"데이터: {data_source}")
+        return " / ".join(parts) if parts else None
 
     def _parse_args(self, arguments: Any) -> dict[str, Any]:
         if isinstance(arguments, dict):
