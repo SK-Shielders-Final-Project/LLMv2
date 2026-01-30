@@ -25,6 +25,10 @@ _IMAGE_PATTERN = re.compile(
     r"(?:IMAGE_MIME:(?P<mime>\S+)\s*)?IMAGE_BASE64:(?P<b64>[A-Za-z0-9+/=]+)",
     re.IGNORECASE,
 )
+_IMAGE_START_PATTERN = re.compile(
+    r"IMAGE_START:(?P<b64>[A-Za-z0-9+/=]+):IMAGE_END",
+    re.IGNORECASE,
+)
 _PLOT_KEYWORDS_PATTERN = re.compile(r"(그래프|시각화|차트|plot|chart)", re.IGNORECASE)
 _TOOL_CODE_PATTERN = re.compile(r"```tool_code\s*(.+?)```", re.DOTALL | re.IGNORECASE)
 _ACTIONS_JSON_PATTERN = re.compile(r"```json\s*(\{.+?\})\s*```", re.DOTALL | re.IGNORECASE)
@@ -240,7 +244,7 @@ class Orchestrator:
         )
         if code:
             postlude = ""
-            if "IMAGE_BASE64" not in code:
+            if "IMAGE_BASE64" not in code and "IMAGE_START" not in code:
                 postlude = (
                     "\n\ntry:\n"
                     "    import io\n"
@@ -250,10 +254,11 @@ class Orchestrator:
                     "        buf = io.BytesIO()\n"
                     "        plt.tight_layout()\n"
                     "        plt.savefig(buf, format='png')\n"
-                    "        b64 = base64.b64encode(buf.getvalue()).decode('ascii')\n"
-                    "        print(f\"IMAGE_MIME:image/png IMAGE_BASE64:{b64}\")\n"
-                    "except Exception:\n"
-                    "    pass\n"
+                    "        buf.seek(0)\n"
+                    "        img_base64 = base64.b64encode(buf.read()).decode('utf-8')\n"
+                    "        print(f\"IMAGE_START:{img_base64}:IMAGE_END\")\n"
+                    "except Exception as e:\n"
+                    "    print(f\"GRAPH_ERROR:{e}\")\n"
                 )
             return f"{prelude}\n{code}{postlude}"
         return f"{prelude}\nprint(json.dumps(inputs, ensure_ascii=False))"
@@ -291,10 +296,24 @@ class Orchestrator:
             return [], stdout
         images: list[dict[str, str]] = []
 
+        def _append_image(b64: str, mime: str = "image/png") -> None:
+            images.append(
+                {
+                    "mime": mime,
+                    "base64": b64,
+                    "data_url": f"data:{mime};base64,{b64}",
+                }
+            )
+
         def _replace(match: re.Match[str]) -> str:
             mime = match.group("mime") or "image/png"
-            images.append({"mime": mime, "base64": match.group("b64")})
+            _append_image(match.group("b64"), mime=mime)
+            return "[image omitted]"
+
+        def _replace_start(match: re.Match[str]) -> str:
+            _append_image(match.group("b64"))
             return "[image omitted]"
 
         cleaned = _IMAGE_PATTERN.sub(_replace, stdout)
+        cleaned = _IMAGE_START_PATTERN.sub(_replace_start, cleaned)
         return images, cleaned
