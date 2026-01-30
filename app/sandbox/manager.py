@@ -23,11 +23,14 @@ class SandboxManager:
 
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         install_cmd = f"pip install {' '.join(packages)} && " if packages else ""
+        run_enabled = os.getenv("SANDBOX_RUN_CODE", "true").strip().lower() in {"1", "true", "yes"}
+        exec_cmd = "python /tmp/user_code.py" if run_enabled else "true"
         full_command = (
             "sh -c \""
             f"{install_cmd}"
             f"printf '%s' '{encoded}' | base64 -d > /tmp/user_code.py && "
-            "cat /tmp/user_code.py\""
+            "cat /tmp/user_code.py && "
+            f"{exec_cmd}\""
         )
 
         container = None
