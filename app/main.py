@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -18,6 +19,24 @@ app = FastAPI(title="LLM Orchestrator API")
 
 load_dotenv(override=True)
 app.include_router(registry_router, prefix="/tools")
+
+
+def configure_logging() -> None:
+    base_dir = os.path.dirname(__file__)
+    log_dir = os.path.join(base_dir, "log")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "log.txt")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler(log_path, encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
+    )
+
+
+configure_logging()
 
 
 def create_orchestrator() -> Orchestrator:
