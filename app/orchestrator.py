@@ -231,7 +231,13 @@ class Orchestrator:
     ) -> str:
         payload = inputs if inputs is not None else {"results": results, "task": task}
         encoded = json.dumps(payload, ensure_ascii=False)
-        prelude = "import json\n" f"inputs = json.loads('''{encoded}''')\n"
+        prelude = (
+            "import json\n"
+            "import matplotlib\n"
+            "matplotlib.use('Agg')\n"
+            "import matplotlib.pyplot as plt\n"
+            f"inputs = json.loads('''{encoded}''')\n"
+        )
         if code:
             postlude = ""
             if "IMAGE_BASE64" not in code:
