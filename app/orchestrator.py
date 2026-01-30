@@ -30,6 +30,17 @@ _IMAGE_START_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _PLOT_KEYWORDS_PATTERN = re.compile(r"(그래프|시각화|차트|plot|chart)", re.IGNORECASE)
+_IMPORT_PATTERN = re.compile(r"^\s*(?:from|import)\s+([a-zA-Z0-9_\.]+)", re.MULTILINE)
+_AUTO_PACKAGE_ALLOWLIST = {
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "scipy",
+    "statsmodels",
+    "sklearn",
+    "plotly",
+}
 _TOOL_CODE_PATTERN = re.compile(r"```tool_code\s*(.+?)```", re.DOTALL | re.IGNORECASE)
 _ACTIONS_JSON_PATTERN = re.compile(r"```json\s*(\{.+?\})\s*```", re.DOTALL | re.IGNORECASE)
 
@@ -97,6 +108,9 @@ class Orchestrator:
                 )
                 self._validate_code(code)
                 required_packages = args.get("required_packages", []) or []
+                inferred_packages = self._infer_packages_from_code(code)
+                if inferred_packages:
+                    required_packages = self._ensure_packages(required_packages, inferred_packages)
                 if self._needs_plot_packages(message.content):
                     required_packages = self._ensure_packages(required_packages, ["matplotlib"])
 
@@ -313,6 +327,25 @@ class Orchestrator:
                 merged.append(pkg)
                 normalized.add(pkg.lower())
         return merged
+
+    def _infer_packages_from_code(self, code: str) -> list[str]:
+        if not code:
+            return []
+        candidates: list[str] = []
+        for match in _IMPORT_PATTERN.findall(code):
+            module = match.split(".", 1)[0].strip().lower()
+            if module in _AUTO_PACKAGE_ALLOWLIST:
+                candidates.append(module)
+        if not candidates:
+            return []
+        # preserve order, de-duplicate
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for item in candidates:
+            if item not in seen:
+                seen.add(item)
+                ordered.append(item)
+        return ordered
 
     def _extract_images_from_stdout(self, stdout: str) -> tuple[list[dict[str, str]], str]:
         if not stdout:
