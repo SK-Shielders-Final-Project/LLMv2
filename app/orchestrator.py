@@ -489,9 +489,11 @@ class Orchestrator:
         encoded = json.dumps(payload, ensure_ascii=False)
         prelude = (
             "import json\n"
+            "import os\n"
             "import matplotlib\n"
             "matplotlib.use('Agg')\n"
             "import matplotlib.pyplot as plt\n"
+            "os.makedirs('/img', exist_ok=True)\n"
             f"inputs = json.loads('''{encoded}''')\n"
         )
         if code:
@@ -505,6 +507,7 @@ class Orchestrator:
                     "    if plt.get_fignums():\n"
                     "        buf = io.BytesIO()\n"
                     "        plt.tight_layout()\n"
+                    "        plt.savefig('/img/output.png', format='png')\n"
                     "        plt.savefig(buf, format='png')\n"
                     "        buf.seek(0)\n"
                     "        img_base64 = base64.b64encode(buf.read()).decode('utf-8')\n"

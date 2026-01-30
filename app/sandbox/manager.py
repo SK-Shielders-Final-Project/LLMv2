@@ -26,12 +26,13 @@ class SandboxManager:
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         install_cmd = f"pip install {' '.join(packages)} && " if packages else ""
         run_enabled = os.getenv("SANDBOX_RUN_CODE", "true").strip().lower() in {"1", "true", "yes"}
-        exec_cmd = "python /tmp/user_code.py" if run_enabled else "true"
+        exec_cmd = "python /img/user_code.py" if run_enabled else "true"
         full_command = (
             "sh -c \""
             f"{install_cmd}"
-            f"printf '%s' '{encoded}' | base64 -d > /tmp/user_code.py && "
-            "cat /tmp/user_code.py && "
+            "mkdir -p /img && "
+            f"printf '%s' '{encoded}' | base64 -d > /img/user_code.py && "
+            "cat /img/user_code.py && "
             f"{exec_cmd}\""
         )
         logger.info("Sandbox run_enabled=%s command=%s", run_enabled, full_command)
@@ -50,7 +51,14 @@ class SandboxManager:
             )
             result = container.wait(timeout=timeout)
             logs = container.logs().decode("utf-8", errors="replace")
-            return {"exit_code": result.get("StatusCode"), "stdout": logs}
+            return {
+                "exit_code": result.get("StatusCode"),
+                "stdout": logs,
+                "artifacts": {
+                    "code_path": "/img/user_code.py",
+                    "image_path": "/img/output.png",
+                },
+            }
         except Exception as exc:
             return {"exit_code": 1, "error": str(exc)}
         finally:

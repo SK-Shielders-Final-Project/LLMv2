@@ -67,14 +67,22 @@ class SandboxClient:
         command = (
             "bash -lc \""
             f"{inner_prefix}{install_cmd}"
-            f"printf '%s' '{encoded}' | base64 -d > /tmp/user_code.py && "
-            "cat /tmp/user_code.py && "
-            "python /tmp/user_code.py\""
+            "mkdir -p /img && "
+            f"printf '%s' '{encoded}' | base64 -d > /img/user_code.py && "
+            "cat /img/user_code.py && "
+            "python /img/user_code.py\""
         )
         result = container.exec_run(command, workdir=self.exec_workdir)
         stdout = result.output.decode("utf-8", errors="replace") if hasattr(result, "output") else ""
         exit_code = getattr(result, "exit_code", 0)
-        return {"exit_code": exit_code, "stdout": stdout}
+        return {
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "artifacts": {
+                "code_path": "/img/user_code.py",
+                "image_path": "/img/output.png",
+            },
+        }
 
     def _run_via_ssh_exec(self, code: str, required_packages: list[str]) -> dict[str, Any]:
         if not self.ssh_key_path:
@@ -87,9 +95,10 @@ class SandboxClient:
             f"docker exec {self.exec_container} "
             f"{inner_prefix}bash -lc \""
             f"{install_cmd}"
-            f"printf '%s' '{encoded}' | base64 -d > /tmp/user_code.py && "
-            "cat /tmp/user_code.py && "
-            "python /tmp/user_code.py\""
+            "mkdir -p /img && "
+            f"printf '%s' '{encoded}' | base64 -d > /img/user_code.py && "
+            "cat /img/user_code.py && "
+            "python /img/user_code.py\""
         )
 
         ssh = paramiko.SSHClient()
@@ -107,7 +116,14 @@ class SandboxClient:
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode("utf-8", errors="replace").strip()
             error = stderr.read().decode("utf-8", errors="replace").strip()
-            payload: dict[str, Any] = {"exit_code": exit_code, "stdout": output}
+            payload: dict[str, Any] = {
+                "exit_code": exit_code,
+                "stdout": output,
+                "artifacts": {
+                    "code_path": "/img/user_code.py",
+                    "image_path": "/img/output.png",
+                },
+            }
             if error:
                 payload["stderr"] = error
             return payload
