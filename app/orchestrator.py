@@ -45,6 +45,7 @@ _AUTO_PACKAGE_ALLOWLIST = {
 }
 _TOOL_CODE_PATTERN = re.compile(r"```tool_code\s*(.+?)```", re.DOTALL | re.IGNORECASE)
 _ACTIONS_JSON_PATTERN = re.compile(r"```json\s*(\{.+?\})\s*```", re.DOTALL | re.IGNORECASE)
+_JSON_FENCE_PATTERN = re.compile(r"```json\s*(\{.+?\}|\[.+?\])\s*```", re.DOTALL | re.IGNORECASE)
 
 
 class Orchestrator:
@@ -187,7 +188,7 @@ class Orchestrator:
 
     def _parse_args(self, arguments: Any) -> dict[str, Any]:
         if isinstance(arguments, dict):
-            return arguments
+            return self._normalize_params(arguments)
         if isinstance(arguments, str):
             parsed: Any = json.loads(arguments)
             if isinstance(parsed, str):
@@ -199,7 +200,7 @@ class Orchestrator:
                         parsed = json.loads(trimmed)
                     except Exception:
                         return {}
-            return parsed if isinstance(parsed, dict) else {}
+            return self._normalize_params(parsed) if isinstance(parsed, dict) else {}
         raise ValueError("Tool arguments 형식이 올바르지 않습니다.")
 
     def _extract_tool_calls(self, content: str) -> list[Any]:
@@ -223,6 +224,9 @@ class Orchestrator:
                     tool_calls.append(SimpleNamespace(name=name, arguments=args))
 
         for match in _ACTIONS_JSON_PATTERN.findall(content):
+            tool_calls.extend(self._parse_plan(match))
+
+        for match in _JSON_FENCE_PATTERN.findall(content):
             tool_calls.extend(self._parse_plan(match))
 
         for payload in self._extract_json_payloads(content):
@@ -251,7 +255,9 @@ class Orchestrator:
                 name = item.get("tool") or item.get("function") or item.get("name")
                 params = item.get("parameters") or item.get("params") or {}
                 if name:
-                    tool_calls.append(SimpleNamespace(name=name, arguments=params))
+                    tool_calls.append(
+                        SimpleNamespace(name=name, arguments=self._normalize_params(params))
+                    )
             return tool_calls
         if not isinstance(data, dict):
             return tool_calls
@@ -266,14 +272,16 @@ class Orchestrator:
                 tool_calls.append(
                     SimpleNamespace(
                         name="execute_in_sandbox",
-                        arguments={"task": action.get("task")},
+                        arguments=self._normalize_params({"task": action.get("task")}),
                     )
                 )
                 continue
             name = action.get("function") or action.get("function_name") or action.get("name")
             params = action.get("parameters") or action.get("params") or action.get("arguments") or {}
             if name:
-                tool_calls.append(SimpleNamespace(name=name, arguments=params))
+                tool_calls.append(
+                    SimpleNamespace(name=name, arguments=self._normalize_params(params))
+                )
         return tool_calls
 
     def _parse_function_payload(self, payload: Any) -> list[Any]:
@@ -290,7 +298,9 @@ class Orchestrator:
                     args = {}
             if not isinstance(args, dict):
                 args = {}
-            tool_calls.append(SimpleNamespace(name=name, arguments=args))
+            tool_calls.append(
+                SimpleNamespace(name=name, arguments=self._normalize_params(args))
+            )
 
         def _visit(node: Any) -> None:
             if isinstance(node, list):
@@ -371,6 +381,30 @@ class Orchestrator:
                 except ValueError:
                     args[key] = value
         return name, args
+
+    def _normalize_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        def _normalize_key(key: str) -> str:
+            compact = key.replace("_", "").lower()
+            if compact == "userid":
+                return "user_id"
+            return key
+
+        def _normalize_value(value: Any) -> Any:
+            if isinstance(value, dict):
+                return { _normalize_key(k): _normalize_value(v) for k, v in value.items() }
+            if isinstance(value, list):
+                return [_normalize_value(item) for item in value]
+            if isinstance(value, str):
+                trimmed = value.strip()
+                if trimmed.isdigit():
+                    return int(trimmed)
+                try:
+                    return float(trimmed)
+                except ValueError:
+                    return value
+            return value
+
+        return { _normalize_key(k): _normalize_value(v) for k, v in params.items() }
 
     def _build_sandbox_code(
         self,
