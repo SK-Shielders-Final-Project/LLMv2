@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any, Callable
 
 from app.config.db import fetch_all, fetch_one
@@ -31,7 +32,12 @@ class FunctionRegistry:
     def execute(self, name: str, **kwargs: Any) -> Any:
         if name not in self._functions:
             raise ValueError(f"Unknown function: {name}")
-        return self._functions[name](**kwargs)
+        func = self._functions[name]
+        sig = inspect.signature(func)
+        filtered = {
+            key: value for key, value in kwargs.items() if key in sig.parameters
+        }
+        return func(**filtered)
 
 
 
