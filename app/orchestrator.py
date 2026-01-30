@@ -84,7 +84,9 @@ class Orchestrator:
         tool_calls = response.tool_calls or self._extract_tool_calls(response.content or "")
 
         if not tool_calls:
-            raise ValueError("LLM이 tool_calls 또는 plan JSON을 반환하지 않았습니다.")
+            tool_calls = self._fallback_tool_calls(message)
+            if not tool_calls:
+                raise ValueError("LLM이 tool_calls 또는 plan JSON을 반환하지 않았습니다.")
 
 
         ## 결과, 사용된 도구, 이미지 생성 여부를 배열로 담음
@@ -205,6 +207,30 @@ class Orchestrator:
             tool_calls.extend(self._parse_plan(content_stripped))
 
         return tool_calls
+
+    def _fallback_tool_calls(self, message: LlmMessage) -> list[Any]:
+        """
+        LLM이 tool_calls를 반환하지 않을 때 최소한의 규칙 기반으로 도구를 선택한다.
+        """
+        content = (message.content or "").lower()
+        calls: list[Any] = []
+
+        def _add(name: str, args: dict[str, Any]) -> None:
+            calls.append(SimpleNamespace(name=name, arguments=args))
+
+        if any(keyword in content for keyword in ["내 정보", "내정보", "프로필", "사용자 정보"]):
+            _add("get_user_profile", {"user_id": message.user_id})
+        if any(keyword in content for keyword in ["이용 내역", "대여 내역", "이용내역", "대여내역"]):
+            _add("get_rentals", {"user_id": message.user_id, "days": 7})
+        if any(keyword in content for keyword in ["총 결제", "총결제", "결제 합계", "전체 결제"]):
+            _add("get_total_payments", {"user_id": message.user_id})
+        elif "결제" in content:
+            _add("get_payments", {"user_id": message.user_id})
+
+        if any(keyword in content for keyword in ["그래프", "시각화", "차트", "plot", "chart"]):
+            _add("execute_in_sandbox", {"task": "결과를 집계해 그래프를 생성"})
+
+        return calls
 
     def _parse_plan(self, raw: str) -> list[Any]:
         try:
