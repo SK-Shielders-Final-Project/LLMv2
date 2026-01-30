@@ -25,6 +25,7 @@ _IMAGE_PATTERN = re.compile(
     r"(?:IMAGE_MIME:(?P<mime>\S+)\s*)?IMAGE_BASE64:(?P<b64>[A-Za-z0-9+/=]+)",
     re.IGNORECASE,
 )
+_PLOT_KEYWORDS_PATTERN = re.compile(r"(그래프|시각화|차트|plot|chart)", re.IGNORECASE)
 _TOOL_CODE_PATTERN = re.compile(r"```tool_code\s*(.+?)```", re.DOTALL | re.IGNORECASE)
 _ACTIONS_JSON_PATTERN = re.compile(r"```json\s*(\{.+?\})\s*```", re.DOTALL | re.IGNORECASE)
 
@@ -78,9 +79,12 @@ class Orchestrator:
                     results=results,
                 )
                 self._validate_code(code)
+                required_packages = args.get("required_packages", []) or []
+                if self._needs_plot_packages(message.content):
+                    required_packages = self._ensure_packages(required_packages, ["matplotlib"])
                 sandbox_result = self.sandbox_client.run_code(
                     code=code,
-                    required_packages=args.get("required_packages", []),
+                    required_packages=required_packages,
                 )
                 extracted_images, cleaned_stdout = self._extract_images_from_stdout(
                     sandbox_result.get("stdout", "")
@@ -229,7 +233,23 @@ class Orchestrator:
         encoded = json.dumps(payload, ensure_ascii=False)
         prelude = "import json\n" f"inputs = json.loads('''{encoded}''')\n"
         if code:
-            return f"{prelude}\n{code}"
+            postlude = ""
+            if "IMAGE_BASE64" not in code:
+                postlude = (
+                    "\n\ntry:\n"
+                    "    import io\n"
+                    "    import base64\n"
+                    "    import matplotlib.pyplot as plt\n"
+                    "    if plt.get_fignums():\n"
+                    "        buf = io.BytesIO()\n"
+                    "        plt.tight_layout()\n"
+                    "        plt.savefig(buf, format='png')\n"
+                    "        b64 = base64.b64encode(buf.getvalue()).decode('ascii')\n"
+                    "        print(f\"IMAGE_MIME:image/png IMAGE_BASE64:{b64}\")\n"
+                    "except Exception:\n"
+                    "    pass\n"
+                )
+            return f"{prelude}\n{code}{postlude}"
         return f"{prelude}\nprint(json.dumps(inputs, ensure_ascii=False))"
 
     def _validate_code(self, code: str) -> None:
@@ -247,6 +267,18 @@ class Orchestrator:
         for key in _SENSITIVE_KEYS:
             text = re.sub(fr"{key}\s*:\s*\S+", f"{key}: ***", text, flags=re.IGNORECASE)
         return text
+
+    def _needs_plot_packages(self, text: str) -> bool:
+        return bool(_PLOT_KEYWORDS_PATTERN.search(text or ""))
+
+    def _ensure_packages(self, packages: list[str], required: list[str]) -> list[str]:
+        normalized = {pkg.lower() for pkg in packages}
+        merged = list(packages)
+        for pkg in required:
+            if pkg.lower() not in normalized:
+                merged.append(pkg)
+                normalized.add(pkg.lower())
+        return merged
 
     def _extract_images_from_stdout(self, stdout: str) -> tuple[list[dict[str, str]], str]:
         if not stdout:
