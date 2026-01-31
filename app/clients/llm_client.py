@@ -70,10 +70,12 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
             "max_tokens": max_tokens,
             "stream": False,
         }
+        safe_messages = _sanitize_messages(messages)
+        tool_names = _extract_tool_names(tools or [])
         logger.info(
             "LLM 요청 전송 messages=%s tools=%s endpoint=%s",
-            json.dumps(messages, ensure_ascii=False),
-            json.dumps(tools or [], ensure_ascii=False),
+            json.dumps(safe_messages, ensure_ascii=False),
+            json.dumps(tool_names, ensure_ascii=False),
             endpoint,
         )
         data = json.dumps(payload).encode("utf-8")
@@ -161,6 +163,25 @@ def build_http_completion_func() -> Callable[[list[dict], list[dict]], Any]:
 def _flatten_messages(messages: list[dict]) -> list[dict]:
     content = "\n".join(f"[{msg['role']}] {msg['content']}" for msg in messages)
     return [{"role": "user", "content": content}]
+
+
+def _sanitize_messages(messages: list[dict]) -> list[dict]:
+    sanitized: list[dict] = []
+    for msg in messages:
+        role = msg.get("role")
+        if role == "system":
+            continue
+        sanitized.append({"role": role, "content": msg.get("content")})
+    return sanitized
+
+
+def _extract_tool_names(tools: list[dict]) -> list[str]:
+    names: list[str] = []
+    for item in tools:
+        name = item.get("function", {}).get("name")
+        if name:
+            names.append(name)
+    return names
 
 
 def normalize_response(raw: Any) -> LlmResponse:
