@@ -7,6 +7,7 @@ import urllib.request
 from typing import Any
 
 import docker
+import uuid
 from docker.errors import DockerException
 import paramiko
 
@@ -33,6 +34,7 @@ class SandboxClient:
         code: str,
         required_packages: list[str] | None = None,
         user_id: int | None = None,
+        run_id: str | None = None,
     ) -> dict[str, Any]:
         if self.exec_container:
             if self.force_ssh:
@@ -40,11 +42,13 @@ class SandboxClient:
                     code=code,
                     required_packages=required_packages or [],
                     user_id=user_id,
+                    run_id=run_id,
                 )
             return self._run_via_exec(
                 code=code,
                 required_packages=required_packages or [],
                 user_id=user_id,
+                run_id=run_id,
             )
         if not self.base_url:
             raise RuntimeError("SANDBOX_SERVER_URL 또는 SANDBOX_EXEC_CONTAINER가 필요합니다.")
@@ -52,6 +56,7 @@ class SandboxClient:
             "code": code,
             "required_packages": required_packages or [],
             "user_id": user_id,
+            "run_id": run_id,
         }
         data = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
@@ -63,7 +68,13 @@ class SandboxClient:
         with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def _run_via_exec(self, code: str, required_packages: list[str], user_id: int | None) -> dict[str, Any]:
+    def _run_via_exec(
+        self,
+        code: str,
+        required_packages: list[str],
+        user_id: int | None,
+        run_id: str | None,
+    ) -> dict[str, Any]:
         try:
             client = docker.from_env()
             container = client.containers.get(self.exec_container)
@@ -75,7 +86,7 @@ class SandboxClient:
                 "호스트에서 docker 데몬이 실행 중인지, "
                 "DOCKER_HOST 설정 또는 SANDBOX_SERVER_URL 사용을 확인하세요."
             ) from exc
-        base_dir, code_path, image_path = self._build_paths(user_id)
+        base_dir, code_path, image_path = self._build_paths(user_id, run_id)
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         install_cmd = f"pip install {' '.join(required_packages)} && " if required_packages else ""
         inner_prefix = f"docker exec {self.inner_exec_container} " if self.inner_exec_container else ""
@@ -99,11 +110,17 @@ class SandboxClient:
             },
         }
 
-    def _run_via_ssh_exec(self, code: str, required_packages: list[str], user_id: int | None) -> dict[str, Any]:
+    def _run_via_ssh_exec(
+        self,
+        code: str,
+        required_packages: list[str],
+        user_id: int | None,
+        run_id: str | None,
+    ) -> dict[str, Any]:
         if not self.ssh_key_path:
             raise RuntimeError("SANDBOX_REMOTE_KEY_PATH가 설정되지 않았습니다.")
 
-        base_dir, code_path, image_path = self._build_paths(user_id)
+        base_dir, code_path, image_path = self._build_paths(user_id, run_id)
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         install_cmd = f"pip install {' '.join(required_packages)} && " if required_packages else ""
         inner_prefix = f"docker exec {self.inner_exec_container} " if self.inner_exec_container else ""
@@ -146,7 +163,12 @@ class SandboxClient:
         finally:
             ssh.close()
 
-    def _build_paths(self, user_id: int | None) -> tuple[str, str, str]:
+    def _build_paths(self, user_id: int | None, run_id: str | None) -> tuple[str, str, str]:
         suffix = str(user_id) if user_id is not None else "shared"
         base_dir = f"/img/{suffix}"
-        return base_dir, f"{base_dir}/user_code.py", f"{base_dir}/output.png"
+        run_suffix = run_id or uuid.uuid4().hex
+        return (
+            base_dir,
+            f"{base_dir}/user_code_{run_suffix}.py",
+            f"{base_dir}/output_{run_suffix}.png",
+        )

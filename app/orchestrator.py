@@ -116,8 +116,9 @@ class Orchestrator:
             if "user_id" not in args and message.user_id is not None:
                 args["user_id"] = message.user_id
             if call.name == "execute_in_sandbox":
+                run_id = uuid.uuid4().hex
                 user_suffix = str(message.user_id) if message.user_id is not None else "shared"
-                image_path = f"/img/{user_suffix}/output.png"
+                image_path = f"/img/{user_suffix}/output_{run_id}.png"
                 task = args.get("task") or args.get("description") or args.get("query")
                 if not task:
                     task = self._build_task_from_args(args)
@@ -148,6 +149,7 @@ class Orchestrator:
                     code=code,
                     required_packages=required_packages,
                     user_id=message.user_id,
+                    run_id=run_id,
                 )
 
                 ## 이미지 생성

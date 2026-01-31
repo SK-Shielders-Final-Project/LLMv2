@@ -13,6 +13,7 @@ class SandboxRequest(BaseModel):
     code: str = Field(..., description="실행할 Python 코드")
     required_packages: list[str] = Field(default_factory=list)
     user_id: int | None = Field(default=None, description="요청 사용자 ID")
+    run_id: str | None = Field(default=None, description="실행 요청 고유 ID")
 
 
 @app.post("/run")
@@ -24,6 +25,7 @@ def run(request: SandboxRequest) -> dict:
         code=request.code,
         packages=request.required_packages,
         user_id=request.user_id,
+        run_id=request.run_id,
     )
     if result.get("exit_code") not in (0, None):
         raise HTTPException(status_code=400, detail=result.get("error", "Sandbox execution failed"))
