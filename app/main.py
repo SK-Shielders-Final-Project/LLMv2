@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from app.clients.llm_client import LlmClient, build_http_completion_func
 from app.clients.sandbox_client import SandboxClient
@@ -74,8 +74,8 @@ def get_image(image_name: str) -> FileResponse:
     return FileResponse(image_path)
 
 
-@app.post("/api/generate", response_model=GenerateResponse)
-def generate(request: GenerateRequest) -> GenerateResponse:
+@app.post("/api/generate")
+def generate(request: GenerateRequest) -> PlainTextResponse:
     """
     Spring WAS에서 들어온 자연어 요청을 LLM으로 전달하고,
     필요한 함수 및 Sandbox 실행을 오케스트레이션한다.
@@ -93,9 +93,14 @@ def generate(request: GenerateRequest) -> GenerateResponse:
         result = orchestrator.handle_user_request(message)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return GenerateResponse(
-        text=result["text"],
-        model=result["model"],
-        tools_used=result["tools_used"],
-        images=result.get("images", []),
-    )
+    images = result.get("images", []) or []
+    image_lines = []
+    for item in images:
+        url = item.get("url")
+        if url:
+            image_lines.append(f"image : {url}")
+    parts = []
+    if image_lines:
+        parts.append("\n".join(image_lines))
+    parts.append(result["text"])
+    return PlainTextResponse("\n\n".join(part for part in parts if part))
