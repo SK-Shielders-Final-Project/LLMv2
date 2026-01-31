@@ -116,6 +116,8 @@ class Orchestrator:
             if "user_id" not in args and message.user_id is not None:
                 args["user_id"] = message.user_id
             if call.name == "execute_in_sandbox":
+                user_suffix = str(message.user_id) if message.user_id is not None else "shared"
+                image_path = f"/img/{user_suffix}/output.png"
                 task = args.get("task") or args.get("description") or args.get("query")
                 if not task:
                     task = self._build_task_from_args(args)
@@ -127,6 +129,7 @@ class Orchestrator:
                     task=task,
                     inputs=args.get("inputs"),
                     results=results,
+                    image_path=image_path,
                 )
                 logger.info(
                     "============== [LLM GENERATED CODE] ==============\n%s\n==================================================",
@@ -144,6 +147,7 @@ class Orchestrator:
                 sandbox_result = self.sandbox_client.run_code(
                     code=code,
                     required_packages=required_packages,
+                    user_id=message.user_id,
                 )
 
                 ## 이미지 생성
@@ -486,16 +490,19 @@ class Orchestrator:
         task: str | None,
         inputs: dict[str, Any] | None,
         results: list[dict[str, Any]],
+        image_path: str = "/img/output.png",
     ) -> str:
         payload = inputs if inputs is not None else {"results": results, "task": task}
         encoded = json.dumps(payload, ensure_ascii=False)
+        image_path_literal = json.dumps(image_path)
+        image_dir_literal = json.dumps(os.path.dirname(image_path))
         prelude = (
             "import json\n"
             "import os\n"
             "import matplotlib\n"
             "matplotlib.use('Agg')\n"
             "import matplotlib.pyplot as plt\n"
-            "os.makedirs('/img', exist_ok=True)\n"
+            f"os.makedirs({image_dir_literal}, exist_ok=True)\n"
             f"inputs = json.loads('''{encoded}''')\n"
         )
         if code:
@@ -509,7 +516,7 @@ class Orchestrator:
                     "    if plt.get_fignums():\n"
                     "        buf = io.BytesIO()\n"
                     "        plt.tight_layout()\n"
-                    "        plt.savefig('/img/output.png', format='png')\n"
+                    f"        plt.savefig({image_path_literal}, format='png')\n"
                     "        plt.savefig(buf, format='png')\n"
                     "        buf.seek(0)\n"
                     "        img_base64 = base64.b64encode(buf.read()).decode('utf-8')\n"
