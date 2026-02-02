@@ -315,8 +315,27 @@ class Orchestrator:
             for item in data:
                 if not isinstance(item, dict):
                     continue
-                name = item.get("tool") or item.get("function") or item.get("name")
-                params = item.get("parameters") or item.get("params") or item.get("arguments") or {}
+                tool_call_payload = item.get("tool_call")
+                if isinstance(tool_call_payload, dict):
+                    name = (
+                        tool_call_payload.get("tool")
+                        or tool_call_payload.get("function")
+                        or tool_call_payload.get("name")
+                    )
+                    params = (
+                        tool_call_payload.get("parameters")
+                        or tool_call_payload.get("params")
+                        or tool_call_payload.get("arguments")
+                        or {}
+                    )
+                else:
+                    name = item.get("tool") or item.get("function") or item.get("name")
+                    params = item.get("parameters") or item.get("params") or item.get("arguments") or {}
+                if isinstance(params, str):
+                    try:
+                        params = json.loads(params)
+                    except Exception:
+                        params = {}
                 if name:
                     tool_calls.append(
                         SimpleNamespace(name=name, arguments=self._normalize_params(params))
