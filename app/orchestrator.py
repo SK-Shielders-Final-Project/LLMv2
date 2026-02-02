@@ -298,6 +298,10 @@ class Orchestrator:
         content_stripped = content.strip()
         if content_stripped.startswith("{") and content_stripped.endswith("}"):
             tool_calls.extend(self._parse_plan(content_stripped))
+        if not tool_calls and "tool_call" in content_stripped:
+            stripped = self._strip_code_fences(content_stripped).strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                tool_calls.extend(self._parse_plan(stripped))
 
         return tool_calls
 
@@ -443,7 +447,7 @@ class Orchestrator:
         idx = 0
         length = len(content)
         while idx < length:
-            if content[idx] != "{":
+            if content[idx] not in {"{", "["}:
                 idx += 1
                 continue
             try:

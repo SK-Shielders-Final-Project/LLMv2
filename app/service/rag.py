@@ -386,16 +386,18 @@ class RagPipeline:
         context = "\n".join(context_parts)
         system_prompt = (
             "너는 근거 기반 답변 생성기다. "
-            "컨텍스트에 없는 내용은 추측하지 말고, 모르면 모른다고 답하라."
+            "컨텍스트가 부족하면 일반적으로 알려진 안전한 범위의 설명을 제공하고, "
+            "확인이 필요한 부분은 확인이 필요하다고 밝혀라."
         )
         user_prompt = (
             f"질문: {question}\n"
             f"의도: {intent.get('intent')}\n\n"
             f"{context}\n"
             "답변 규칙:\n"
-            "1. 컨텍스트에 있는 정보만 사용\n"
-            "2. 숫자는 정확히 유지\n"
-            "3. 한국어로 간결하게 작성\n"
+            "1. 컨텍스트가 있으면 그 내용을 우선 사용\n"
+            "2. 컨텍스트가 없으면 일반적인 안내 수준으로 답변\n"
+            "3. 숫자는 정확히 유지\n"
+            "4. 한국어로 간결하게 작성\n"
         )
         response = self.llm_client.create_completion(
             messages=[
