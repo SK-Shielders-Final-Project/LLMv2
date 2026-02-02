@@ -4,6 +4,7 @@ import inspect
 from typing import Any, Callable
 
 from app.config.db import fetch_all, fetch_one
+from app.service.mongo.search import search_knowledge as mongo_search_knowledge
 
 class FunctionRegistry:
     """
@@ -24,6 +25,7 @@ class FunctionRegistry:
             "get_inquiries": get_inquiries,
             "get_total_payments": get_total_payments,
             "get_total_usage": get_total_usage,
+            "search_knowledge": search_knowledge,
         }
 
     def list_functions(self) -> list[str]:
@@ -34,9 +36,9 @@ class FunctionRegistry:
             raise ValueError(f"Unknown function: {name}")
         func = self._functions[name]
         sig = inspect.signature(func)
-        filtered = {
-            key: value for key, value in kwargs.items() if key in sig.parameters
-        }
+        filtered = {key: value for key, value in kwargs.items() if key in sig.parameters}
+        if "user_id" in filtered:
+            filtered["user_id"] = _coerce_user_id(filtered["user_id"])
         return func(**filtered)
 
 
@@ -188,3 +190,33 @@ def get_total_usage(user_id: int) -> dict[str, Any]:
     )
     result = fetch_one(query, {"user_id": user_id}) or {"total_rentals": 0, "total_distance": 0}
     return {"user_id": user_id, **result}
+
+
+def search_knowledge(
+    query: str,
+    user_id: int,
+    admin_level: int = 0,
+    top_k: int = 5,
+) -> list[dict[str, Any]]:
+    """
+    MongoDB Vector Search 기반 지식 검색.
+    access_level(public/user/admin)을 필터링한 후 결과를 반환합니다.
+    """
+    profile = get_user_profile(user_id) or {}
+    resolved_admin = int(profile.get("admin_level", 0) or 0)
+    return mongo_search_knowledge(
+        query=query,
+        user_id=_coerce_user_id(user_id),
+        admin_level=resolved_admin,
+        top_k=top_k,
+    )
+
+
+def _coerce_user_id(user_id: Any) -> int:
+    try:
+        value = int(user_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("user_id는 정수여야 합니다.") from exc
+    if value <= 0:
+        raise ValueError("user_id는 1 이상의 값이어야 합니다.")
+    return value

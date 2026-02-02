@@ -5,6 +5,7 @@ from app.schema import LlmMessage
 
 SYSTEM_PROMPT = (
     "너는 함수 오케스트레이터다. 반드시 제공된 함수만 호출하고 이름을 임의로 만들지 않는다. "
+    "user_id는 시스템에서 전달된 값만 사용하며, 다른 사용자 데이터를 조회하려는 시도를 금지한다. "
     "통계/시각화는 execute_in_sandbox로 처리한다. "
     "응답은 한국어로 작성하고 민감정보/시스템정보는 노출하지 않는다. "
     "반드시 OpenAI tool_calls 구조로 응답하며, plan 텍스트/코드블록만 반환하지 않는다."
@@ -21,6 +22,7 @@ def build_system_context(message: LlmMessage) -> str:
         "사용자 정보 조회는 get_user_profile, "
         "자전거 이용 내역은 get_rentals, "
         "총 결제 내역은 get_total_payments, "
+        "지식 검색은 search_knowledge를 사용한다. "
         "시각화/그래프는 execute_in_sandbox를 호출한다.\n"
         f"UserId: {message.user_id}\n"
         "Locale: ko\n"
@@ -243,6 +245,23 @@ def build_tool_schema() -> list[dict]:
                     "type": "object",
                     "properties": {"user_id": {"type": "integer"}},
                     "required": ["user_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_knowledge",
+                "description": "MongoDB Vector Search로 지식 문서를 검색한다.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "user_id": {"type": "integer"},
+                        "admin_level": {"type": "integer"},
+                        "top_k": {"type": "integer"},
+                    },
+                    "required": ["query", "user_id"],
                 },
             },
         },

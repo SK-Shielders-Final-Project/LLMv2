@@ -12,6 +12,7 @@ from typing import Any
 from app.clients.llm_client import LlmClient
 from app.clients.sandbox_client import SandboxClient
 from app.config.llm_service import build_system_context, build_tool_schema
+from app.service.rag import RagPipeline
 from app.service.registry import FunctionRegistry
 from app.schema import LlmMessage
 
@@ -50,19 +51,41 @@ class Orchestrator:
         self.llm_client = llm_client
         self.sandbox_client = sandbox_client
         self.registry = registry
+        self.rag_pipeline = RagPipeline(llm_client)
 
     def handle_user_request(self, message: LlmMessage) -> dict[str, Any]:
         logger = logging.getLogger("orchestrator")
         start = time.monotonic()
 
+        rag_plan = self.rag_pipeline.plan_tool_selection(
+            question=message.content,
+            user_id=message.user_id,
+            admin_level=getattr(message, "admin_level", None),
+        )
+        decision = rag_plan.get("decision") or {}
+        if decision.get("data_source") == "vector_only":
+            rag_result = self.rag_pipeline.process_question(
+                question=message.content,
+                user_id=message.user_id,
+                admin_level=getattr(message, "admin_level", None),
+            )
+            return {
+                "text": rag_result.get("answer", ""),
+                "model": "rag_pipeline",
+                "tools_used": [],
+                "images": [],
+            }
+
         ## 시스템 프롬프트 주입
         system_prompt = build_system_context(message)
         ## 해당 도구 사용하는 스키마
-        tools = build_tool_schema()
+        tools = self._filter_tools_by_allowlist(
+            build_tool_schema(), rag_plan.get("tool_allowlist", [])
+        )
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": message.content},
+            {"role": "user", "content": f"{message.content}\n\n{rag_plan.get('context','')}"},
         ]
 
         ## llm 실행 1차 응답
@@ -102,7 +125,7 @@ class Orchestrator:
         ## 도구 실행 루프
         for call in tool_calls:
             args = self._parse_args(call.arguments)
-            if "user_id" not in args and message.user_id is not None:
+            if message.user_id is not None:
                 args["user_id"] = message.user_id
             if call.name == "execute_in_sandbox":
                 run_id = uuid.uuid4().hex
@@ -149,6 +172,7 @@ class Orchestrator:
 
         final_user_content = (
             f"사용자 요청: {message.content}\n"
+            f"라우팅 컨텍스트:\n{rag_plan.get('context','')}\n"
             "이제 도구 호출은 금지된다. plan/json/tool_code를 출력하지 말고 "
             "최종 사용자 답변만 자연어로 작성하라.\n"
             f"함수 실행 결과: {json.dumps(results, ensure_ascii=False)}"
@@ -187,8 +211,6 @@ class Orchestrator:
         system_prompt = (
             "너는 Python 코드 생성기다. "
             "이미 변수 inputs(dict)가 존재한다고 가정하고 이를 활용한다. "
-            "시각화 요청이면 matplotlib로 그래프를 그리고, "
-            "이미지 저장 코드는 넣지 말라(호스트가 자동으로 처리한다). "
             "설명/주석/코드블록 없이 Python 코드만 출력하라."
         )
         payload = inputs if inputs is not None else {"results": results, "task": task}
@@ -451,6 +473,17 @@ class Orchestrator:
             return value
 
         return { _normalize_key(k): _normalize_value(v) for k, v in params.items() }
+
+    def _filter_tools_by_allowlist(self, tools: list[dict], allowlist: list[str]) -> list[dict]:
+        if not allowlist:
+            return tools
+        allowset = set(allowlist)
+        filtered: list[dict] = []
+        for item in tools:
+            name = item.get("function", {}).get("name")
+            if name == "execute_in_sandbox" or name in allowset:
+                filtered.append(item)
+        return filtered
 
     def _strip_code_fences(self, text: str) -> str:
         if not text:

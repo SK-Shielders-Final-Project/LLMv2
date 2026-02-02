@@ -12,6 +12,11 @@ class LlmMessage(BaseModel):
         description="메시지 역할",
     )
     user_id: int = Field(..., examples=[1], description="대화 소유 사용자 ID")
+    admin_level: int | None = Field(
+        default=None,
+        examples=[0, 1, 2],
+        description="관리자 레벨 (0=일반, 1+=관리자)",
+    )
     content: str = Field(
         ...,
         examples=[
@@ -49,6 +54,7 @@ class GenerateRequest(BaseModel):
     message: LlmMessage | None = Field(default=None, description="메시지 객체")
     comment: str | None = Field(default=None, description="사용자 자연어 요청")
     user_id: int | None = Field(default=None, description="요청 사용자 ID")
+    admin_level: int | None = Field(default=None, description="관리자 레벨")
 
     class Config:
         str_strip_whitespace = True

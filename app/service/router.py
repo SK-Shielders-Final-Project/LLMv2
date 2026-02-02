@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter
+from pydantic import BaseModel, Field
 
+from app.clients.llm_client import LlmClient, build_http_completion_func
+from app.service.rag import RagPipeline
 from app.service.registry import (
     get_available_bikes,
     get_inquiries,
@@ -17,6 +20,14 @@ from app.service.registry import (
 )
 
 router = APIRouter()
+_rag_pipeline = RagPipeline(LlmClient(build_http_completion_func()))
+
+
+class RagRequest(BaseModel):
+    question: str = Field(..., description="사용자 질문")
+    user_id: int = Field(..., description="요청 사용자 ID")
+    admin_level: int | None = Field(default=None, description="관리자 레벨")
+    top_k: int = Field(default=5, description="Vector 검색 결과 개수")
 
 
 @router.get("/getUserProfile")
@@ -62,4 +73,24 @@ def get_total_payments_api(user_id: int) -> dict[str, Any]:
 @router.get("/getTotalUsage")
 def get_total_usage_api(user_id: int) -> dict[str, Any]:
     return get_total_usage(user_id=user_id)
+
+
+@router.post("/rag/answer")
+def rag_answer_api(request: RagRequest) -> dict[str, Any]:
+    return _rag_pipeline.process_question(
+        question=request.question,
+        user_id=request.user_id,
+        admin_level=request.admin_level,
+        top_k=request.top_k,
+    )
+
+
+@router.post("/rag/route")
+def rag_route_api(request: RagRequest) -> dict[str, Any]:
+    return _rag_pipeline.route_only(
+        question=request.question,
+        user_id=request.user_id,
+        admin_level=request.admin_level,
+        top_k=request.top_k,
+    )
 
