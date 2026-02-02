@@ -518,7 +518,10 @@ class RagPipeline:
             metadata = doc.get("metadata") or {}
             if metadata.get("doc_type") not in {"conversation", "assistant_reply"}:
                 continue
-            tags = set(metadata.get("intent_tags") or [])
+            tags = set()
+            for item in metadata.get("intent_tags") or []:
+                if isinstance(item, (str, int, float)):
+                    tags.add(str(item))
             if tags.intersection({"personal_data", "realtime_location", "transaction", "history"}):
                 return 1.0
         return 0.0
