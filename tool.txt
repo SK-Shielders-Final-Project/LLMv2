@@ -6,3 +6,4 @@ docker
 paramiko
 python-dotenv
 sentence-transformers
+pymongo

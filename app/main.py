@@ -6,6 +6,8 @@ import os
 from dotenv import load_dotenv
 from typing import Any
 
+load_dotenv(override=True)
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 
@@ -17,8 +19,6 @@ from app.service.router import router as registry_router
 from app.schema import GenerateRequest, GenerateResponse, LlmMessage
 
 app = FastAPI(title="LLM Orchestrator API")
-
-load_dotenv(override=True)
 app.include_router(registry_router, prefix="/tools")
 
 
