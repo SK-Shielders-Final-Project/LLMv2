@@ -337,13 +337,18 @@ class Orchestrator:
                     )
                 )
                 continue
-            name = (
-                action.get("tool")
-                or action.get("function")
-                or action.get("function_name")
-                or action.get("name")
-            )
-            params = action.get("parameters") or action.get("params") or action.get("arguments") or {}
+            function_payload = action.get("function")
+            if isinstance(function_payload, dict):
+                name = function_payload.get("name")
+                params = function_payload.get("arguments") or {}
+            else:
+                name = (
+                    action.get("tool")
+                    or action.get("function")
+                    or action.get("function_name")
+                    or action.get("name")
+                )
+                params = action.get("parameters") or action.get("params") or action.get("arguments") or {}
             if name:
                 tool_calls.append(
                     SimpleNamespace(name=name, arguments=self._normalize_params(params))
