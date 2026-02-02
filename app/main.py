@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
 
 from app.clients.llm_client import LlmClient, build_http_completion_func
 from app.clients.sandbox_client import SandboxClient
@@ -60,18 +60,6 @@ def list_functions() -> dict[str, list[str]]:
     return {"functions": orchestrator.registry.list_functions()}
 
 
-def _get_image_storage_dir() -> str:
-    base_dir = os.path.dirname(__file__)
-    return os.getenv("IMAGE_STORAGE_DIR", os.path.join(base_dir, "log", "img"))
-
-
-@app.get("/images/{image_name}")
-def get_image(image_name: str) -> FileResponse:
-    image_dir = _get_image_storage_dir()
-    image_path = os.path.join(image_dir, image_name)
-    if not os.path.exists(image_path):
-        raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다.")
-    return FileResponse(image_path)
 
 
 @app.post("/api/generate")
@@ -93,14 +81,4 @@ def generate(request: GenerateRequest) -> PlainTextResponse:
         result = orchestrator.handle_user_request(message)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    images = result.get("images", []) or []
-    image_lines = []
-    for item in images:
-        url = item.get("url")
-        if url:
-            image_lines.append(f"image : {url}")
-    parts = []
-    if image_lines:
-        parts.append("\n".join(image_lines))
-    parts.append(result["text"])
-    return PlainTextResponse("\n\n".join(part for part in parts if part))
+    return PlainTextResponse(result["text"])

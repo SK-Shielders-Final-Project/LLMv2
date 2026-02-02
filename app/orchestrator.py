@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import logging
 import os
@@ -25,14 +23,6 @@ _BLOCKED_CODE_PATTERN = re.compile(
 )
 
 _SENSITIVE_KEYS = {"password", "card_number", "pass"}
-_IMAGE_PATTERN = re.compile(
-    r"(?:IMAGE_MIME:(?P<mime>\S+)\s*)?IMAGE_BASE64:(?P<b64>[A-Za-z0-9+/=]+)",
-    re.IGNORECASE,
-)
-_IMAGE_START_PATTERN = re.compile(
-    r"IMAGE_START:(?P<b64>[A-Za-z0-9+/=]+):IMAGE_END",
-    re.IGNORECASE,
-)
 _PLOT_KEYWORDS_PATTERN = re.compile(r"(그래프|시각화|차트|plot|chart)", re.IGNORECASE)
 _IMPORT_PATTERN = re.compile(r"^\s*(?:from|import)\s+([a-zA-Z0-9_\.]+)", re.MULTILINE)
 _AUTO_PACKAGE_ALLOWLIST = {
@@ -105,10 +95,9 @@ class Orchestrator:
             raise ValueError("LLM이 tool_calls 또는 plan JSON을 반환하지 않았습니다.")
 
 
-        ## 결과, 사용된 도구, 이미지 생성 여부를 배열로 담음
+        ## 결과, 사용된 도구를 배열로 담음
         results: list[dict[str, Any]] = []
         tools_used: list[str] = []
-        images: list[dict[str, str]] = []
 
         ## 도구 실행 루프
         for call in tool_calls:
@@ -117,8 +106,6 @@ class Orchestrator:
                 args["user_id"] = message.user_id
             if call.name == "execute_in_sandbox":
                 run_id = uuid.uuid4().hex
-                user_suffix = str(message.user_id) if message.user_id is not None else "shared"
-                image_path = f"/img/{user_suffix}/output_{run_id}.png"
                 task = args.get("task") or args.get("description") or args.get("query")
                 if not task:
                     task = self._build_task_from_args(args)
@@ -130,7 +117,6 @@ class Orchestrator:
                     task=task,
                     inputs=args.get("inputs"),
                     results=results,
-                    image_path=image_path,
                 )
                 logger.info(
                     "============== [LLM GENERATED CODE] ==============\n%s\n==================================================",
@@ -152,13 +138,6 @@ class Orchestrator:
                     run_id=run_id,
                 )
 
-                ## 이미지 생성
-                extracted_images, cleaned_stdout = self._extract_images_from_stdout(
-                    sandbox_result.get("stdout", "")
-                )
-                if extracted_images:
-                    images.extend(extracted_images)
-                    sandbox_result["stdout"] = cleaned_stdout
                 results.append({"tool": call.name, "result": sandbox_result})
                 tools_used.append(call.name)
                 continue
@@ -188,18 +167,12 @@ class Orchestrator:
         )
         final_text = self._sanitize_text(final_response.content or "")
 
-        ## 이미지와 응답들을 출력
-        extracted_images, cleaned_text = self._extract_images_from_stdout(final_text)
-        if extracted_images:
-            images.extend(extracted_images)
-            final_text = cleaned_text
-
         ## 결과 반환
         return {
             "text": final_text,
             "model": final_response.model,
             "tools_used": tools_used,
-            "images": images,
+            "images": [],
         }
 
     def _generate_sandbox_code(
@@ -492,41 +465,19 @@ class Orchestrator:
         task: str | None,
         inputs: dict[str, Any] | None,
         results: list[dict[str, Any]],
-        image_path: str = "/img/output.png",
     ) -> str:
         payload = inputs if inputs is not None else {"results": results, "task": task}
         encoded = json.dumps(payload, ensure_ascii=False)
-        image_path_literal = json.dumps(image_path)
-        image_dir_literal = json.dumps(os.path.dirname(image_path))
         prelude = (
             "import json\n"
             "import os\n"
             "import matplotlib\n"
             "matplotlib.use('Agg')\n"
             "import matplotlib.pyplot as plt\n"
-            f"os.makedirs({image_dir_literal}, exist_ok=True)\n"
             f"inputs = json.loads('''{encoded}''')\n"
         )
         if code:
-            postlude = ""
-            if "IMAGE_BASE64" not in code and "IMAGE_START" not in code:
-                postlude = (
-                    "\n\ntry:\n"
-                    "    import io\n"
-                    "    import base64\n"
-                    "    import matplotlib.pyplot as plt\n"
-                    "    if plt.get_fignums():\n"
-                    "        buf = io.BytesIO()\n"
-                    "        plt.tight_layout()\n"
-                    f"        plt.savefig({image_path_literal}, format='png')\n"
-                    "        plt.savefig(buf, format='png')\n"
-                    "        buf.seek(0)\n"
-                    "        img_base64 = base64.b64encode(buf.read()).decode('utf-8')\n"
-                    "        print(f\"IMAGE_START:{img_base64}:IMAGE_END\")\n"
-                    "except Exception as e:\n"
-                    "    print(f\"GRAPH_ERROR:{e}\")\n"
-                )
-            return f"{prelude}\n{code}{postlude}"
+            return f"{prelude}\n{code}"
         return f"{prelude}\nprint(json.dumps(inputs, ensure_ascii=False))"
 
     def _validate_code(self, code: str) -> None:
@@ -575,57 +526,3 @@ class Orchestrator:
                 seen.add(item)
                 ordered.append(item)
         return ordered
-
-    def _extract_images_from_stdout(self, stdout: str) -> tuple[list[dict[str, str]], str]:
-        if not stdout:
-            return [], stdout
-        images: list[dict[str, str]] = []
-        mode = os.getenv("IMAGE_RETURN_MODE", "url").strip().lower()
-
-        def _append_image(b64: str, mime: str = "image/png") -> None:
-            if mode in {"omit", "none"}:
-                return
-            file_name = self._save_image_to_disk(b64, mime=mime)
-            if not file_name:
-                return
-            digest = hashlib.sha256(b64.encode("utf-8")).hexdigest()
-            url = f"/images/{file_name}"
-            if mode in {"hash", "short"}:
-                images.append({"mime": mime, "sha256": digest, "url": url})
-                return
-            if mode == "base64":
-                images.append(
-                    {"mime": mime, "base64": b64, "data_url": f"data:{mime};base64,{b64}", "url": url}
-                )
-                return
-            images.append({"mime": mime, "sha256": digest, "url": url})
-
-        def _replace(match: re.Match[str]) -> str:
-            mime = match.group("mime") or "image/png"
-            _append_image(match.group("b64"), mime=mime)
-            return "[image omitted]"
-
-        def _replace_start(match: re.Match[str]) -> str:
-            _append_image(match.group("b64"))
-            return "[image omitted]"
-
-        cleaned = _IMAGE_PATTERN.sub(_replace, stdout)
-        cleaned = _IMAGE_START_PATTERN.sub(_replace_start, cleaned)
-        return images, cleaned
-
-    def _save_image_to_disk(self, b64: str, mime: str) -> str | None:
-        try:
-            raw = base64.b64decode(b64)
-        except Exception:
-            return None
-        ext = "png"
-        if "/" in mime:
-            ext = mime.split("/", 1)[1] or "png"
-        base_dir = os.path.dirname(__file__)
-        storage_dir = os.getenv("IMAGE_STORAGE_DIR", os.path.join(base_dir, "log", "img"))
-        os.makedirs(storage_dir, exist_ok=True)
-        file_name = f"{uuid.uuid4().hex}.{ext}"
-        path = os.path.join(storage_dir, file_name)
-        with open(path, "wb") as f:
-            f.write(raw)
-        return file_name

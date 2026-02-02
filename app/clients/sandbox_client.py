@@ -80,13 +80,18 @@ class SandboxClient:
             container = client.containers.get(self.exec_container)
         except (DockerException, FileNotFoundError) as exc:
             if self.ssh_host:
-                return self._run_via_ssh_exec(code=code, required_packages=required_packages)
+                return self._run_via_ssh_exec(
+                    code=code,
+                    required_packages=required_packages,
+                    user_id=user_id,
+                    run_id=run_id,
+                )
             raise RuntimeError(
                 "Docker 소켓에 접근할 수 없습니다. "
                 "호스트에서 docker 데몬이 실행 중인지, "
                 "DOCKER_HOST 설정 또는 SANDBOX_SERVER_URL 사용을 확인하세요."
             ) from exc
-        base_dir, code_path, image_path = self._build_paths(user_id, run_id)
+        base_dir, code_path = self._build_paths(user_id, run_id)
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         install_cmd = f"pip install {' '.join(required_packages)} && " if required_packages else ""
         inner_prefix = f"docker exec {self.inner_exec_container} " if self.inner_exec_container else ""
@@ -106,7 +111,6 @@ class SandboxClient:
             "stdout": stdout,
             "artifacts": {
                 "code_path": code_path,
-                "image_path": image_path,
             },
         }
 
@@ -120,7 +124,7 @@ class SandboxClient:
         if not self.ssh_key_path:
             raise RuntimeError("SANDBOX_REMOTE_KEY_PATH가 설정되지 않았습니다.")
 
-        base_dir, code_path, image_path = self._build_paths(user_id, run_id)
+        base_dir, code_path = self._build_paths(user_id, run_id)
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         install_cmd = f"pip install {' '.join(required_packages)} && " if required_packages else ""
         inner_prefix = f"docker exec {self.inner_exec_container} " if self.inner_exec_container else ""
@@ -154,7 +158,6 @@ class SandboxClient:
                 "stdout": output,
                 "artifacts": {
                     "code_path": code_path,
-                    "image_path": image_path,
                 },
             }
             if error:
@@ -163,12 +166,8 @@ class SandboxClient:
         finally:
             ssh.close()
 
-    def _build_paths(self, user_id: int | None, run_id: str | None) -> tuple[str, str, str]:
+    def _build_paths(self, user_id: int | None, run_id: str | None) -> tuple[str, str]:
         suffix = str(user_id) if user_id is not None else "shared"
-        base_dir = f"/img/{suffix}"
+        base_dir = f"/code/{suffix}"
         run_suffix = run_id or uuid.uuid4().hex
-        return (
-            base_dir,
-            f"{base_dir}/user_code_{run_suffix}.py",
-            f"{base_dir}/output_{run_suffix}.png",
-        )
+        return base_dir, f"{base_dir}/user_code_{run_suffix}.py"

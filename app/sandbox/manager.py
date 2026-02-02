@@ -30,7 +30,7 @@ class SandboxManager:
         packages = packages or []
         logger = logging.getLogger("sandbox")
 
-        base_dir, code_path, image_path = self._build_paths(user_id, run_id)
+        base_dir, code_path = self._build_paths(user_id, run_id)
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         install_cmd = f"pip install {' '.join(packages)} && " if packages else ""
         run_enabled = os.getenv("SANDBOX_RUN_CODE", "true").strip().lower() in {"1", "true", "yes"}
@@ -64,7 +64,6 @@ class SandboxManager:
                 "stdout": logs,
                 "artifacts": {
                     "code_path": code_path,
-                    "image_path": image_path,
                 },
             }
         except Exception as exc:
@@ -81,12 +80,8 @@ class SandboxManager:
             return docker.DockerClient(base_url=f"tcp://{self.remote_host}:{self.remote_port}")
         return docker.from_env()
 
-    def _build_paths(self, user_id: int | None, run_id: str | None) -> tuple[str, str, str]:
+    def _build_paths(self, user_id: int | None, run_id: str | None) -> tuple[str, str]:
         suffix = str(user_id) if user_id is not None else "shared"
-        base_dir = f"/img/{suffix}"
+        base_dir = f"/code/{suffix}"
         run_suffix = run_id or uuid.uuid4().hex
-        return (
-            base_dir,
-            f"{base_dir}/user_code_{run_suffix}.py",
-            f"{base_dir}/output_{run_suffix}.png",
-        )
+        return base_dir, f"{base_dir}/user_code_{run_suffix}.py"
