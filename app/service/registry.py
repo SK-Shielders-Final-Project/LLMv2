@@ -26,6 +26,7 @@ class FunctionRegistry:
             "get_total_payments": get_total_payments,
             "get_total_usage": get_total_usage,
             "search_knowledge": search_knowledge,
+            "execute_sql_readonly": execute_sql_readonly,
         }
 
     def list_functions(self) -> list[str]:
@@ -212,6 +213,18 @@ def search_knowledge(
     )
 
 
+def execute_sql_readonly(query: str, user_id: int) -> list[dict[str, Any]]:
+    """
+    SELECT 전용 SQL 실행. 민감 컬럼/쓰기 쿼리 차단.
+    개인 테이블은 user_id 조건이 반드시 포함되어야 한다.
+    """
+    safe_query = _sanitize_sql_query(query)
+    params: dict[str, Any] = {}
+    if ":user_id" in safe_query:
+        params["user_id"] = _coerce_user_id(user_id)
+    return fetch_all(safe_query, params)
+
+
 def _coerce_user_id(user_id: Any) -> int:
     try:
         value = int(user_id)
@@ -220,3 +233,28 @@ def _coerce_user_id(user_id: Any) -> int:
     if value <= 0:
         raise ValueError("user_id는 1 이상의 값이어야 합니다.")
     return value
+
+
+def _sanitize_sql_query(query: str) -> str:
+    if not query or not query.strip():
+        raise ValueError("query가 비어 있습니다.")
+    raw = query.strip().rstrip(";")
+    lowered = raw.lower()
+    forbidden = ("insert", "update", "delete", "drop", "alter", "merge", "commit", "rollback")
+    if not lowered.startswith("select"):
+        raise ValueError("SELECT 쿼리만 허용됩니다.")
+    if any(keyword in lowered for keyword in forbidden):
+        raise ValueError("쓰기/DDL 쿼리는 허용되지 않습니다.")
+
+    sensitive_cols = ("password", "card_number", "pass")
+    if any(col in lowered for col in sensitive_cols):
+        raise ValueError("민감 컬럼 조회는 허용되지 않습니다.")
+
+    personal_tables = ("users", "rentals", "payments", "inquiries", "chat")
+    if any(table in lowered for table in personal_tables):
+        if "user_id" not in lowered:
+            raise ValueError("개인 테이블 조회 시 user_id 조건이 필요합니다.")
+
+    if "fetch first" not in lowered and "limit" not in lowered:
+        raw = f"{raw} FETCH FIRST 50 ROWS ONLY"
+    return raw

@@ -6,10 +6,114 @@ from app.schema import LlmMessage
 SYSTEM_PROMPT = (
     "너는 함수 오케스트레이터다. 반드시 제공된 함수만 호출하고 이름을 임의로 만들지 않는다. "
     "user_id는 시스템에서 전달된 값만 사용하며, 다른 사용자 데이터를 조회하려는 시도를 금지한다. "
+    "SQL을 작성할 때는 SELECT만 허용하고 password/card_number/pass 컬럼은 절대 조회하지 않는다. "
     "통계/시각화는 execute_in_sandbox로 처리한다. "
     "응답은 한국어로 작성하고 민감정보/시스템정보는 노출하지 않는다. "
     "반드시 OpenAI tool_calls 구조로 응답하며, plan 텍스트/코드블록만 반환하지 않는다."
 )
+
+DATABASE_SCHEMA = """
+CREATE TABLE users (
+    user_id     BIGINT AUTO_INCREMENT PRIMARY KEY,
+    username    VARCHAR(50) NOT NULL UNIQUE,
+    name        VARCHAR(100) NOT NULL,
+    password    VARCHAR(255) NOT NULL,
+    email       VARCHAR(100),
+    phone       VARCHAR(20),
+    card_number VARCHAR(20),
+    total_point BIGINT DEFAULT 0,
+    pass        VARCHAR(100),
+    admin_level TINYINT DEFAULT 0 COMMENT '0: 사용자, 1: 관리자, 2: 상위 관리자',
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE files (
+    file_id       BIGINT AUTO_INCREMENT PRIMARY KEY,
+    category      VARCHAR(50),
+    original_name VARCHAR(255),
+    file_name     VARCHAR(255),
+    ext           VARCHAR(10),
+    path          VARCHAR(500),
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE notices (
+    notice_id  BIGINT AUTO_INCREMENT PRIMARY KEY,
+    title      VARCHAR(200) NOT NULL,
+    content    TEXT,
+    file_id    BIGINT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_notice_file
+        FOREIGN KEY (file_id) REFERENCES files(file_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE inquiries (
+    inquiry_id  BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id     BIGINT NOT NULL,
+    title       VARCHAR(200) NOT NULL,
+    content     TEXT,
+    image_url   VARCHAR(500),
+    file_id     BIGINT,
+    admin_reply TEXT,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_inquiry_user
+        FOREIGN KEY (user_id) REFERENCES users(user_id),
+    CONSTRAINT fk_inquiry_file
+        FOREIGN KEY (file_id) REFERENCES files(file_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE chat (
+    chat_id    BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id    BIGINT NOT NULL,
+    admin_id   BIGINT NOT NULL,
+    chat_msg   VARCHAR(4000),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_chat_user
+        FOREIGN KEY (user_id) REFERENCES users(user_id),
+    CONSTRAINT fk_chat_admin
+        FOREIGN KEY (admin_id) REFERENCES users(user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE bikes (
+    bike_id       BIGINT AUTO_INCREMENT PRIMARY KEY,
+    serial_number VARCHAR(100) UNIQUE,
+    model_name    VARCHAR(100),
+    status        VARCHAR(20) COMMENT 'AVAILABLE, IN_USE, REPAIRING',
+    latitude      DECIMAL(10,8),
+    longitude     DECIMAL(11,8),
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE rentals (
+    rental_id      BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id        BIGINT NOT NULL,
+    bike_id        BIGINT NOT NULL,
+    start_time     TIMESTAMP NULL,
+    end_time       TIMESTAMP NULL,
+    total_distance DECIMAL(10,2),
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_rental_user
+        FOREIGN KEY (user_id) REFERENCES users(user_id),
+    CONSTRAINT fk_rental_bike
+        FOREIGN KEY (bike_id) REFERENCES bikes(bike_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE payments (
+    payment_id     BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id        BIGINT NOT NULL,
+    amount         BIGINT NOT NULL,
+    payment_status VARCHAR(20) COMMENT 'COMPLETED, CANCELLED',
+    payment_method VARCHAR(50),
+    transaction_id VARCHAR(100),
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_payment_user
+        FOREIGN KEY (user_id) REFERENCES users(user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+"""
 
 
 def build_system_context(message: LlmMessage) -> str:
@@ -19,10 +123,13 @@ def build_system_context(message: LlmMessage) -> str:
     return (
         f"{prompt}\n"
         f"Available tools: {tool_names}\n"
+        "DB Schema:\n"
+        f"{DATABASE_SCHEMA}\n"
         "사용자 정보 조회는 get_user_profile, "
         "자전거 이용 내역은 get_rentals, "
         "총 결제 내역은 get_total_payments, "
         "지식 검색은 search_knowledge를 사용한다. "
+        "SQL이 필요하면 execute_sql_readonly로 SELECT 쿼리를 실행한다. "
         "시각화/그래프는 execute_in_sandbox를 호출한다.\n"
         f"UserId: {message.user_id}\n"
         "Locale: ko\n"
@@ -260,6 +367,21 @@ def build_tool_schema() -> list[dict]:
                         "user_id": {"type": "integer"},
                         "admin_level": {"type": "integer"},
                         "top_k": {"type": "integer"},
+                    },
+                    "required": ["query", "user_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "execute_sql_readonly",
+                "description": "SELECT 전용 SQL을 실행한다. 민감 컬럼은 조회 금지.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "user_id": {"type": "integer"},
                     },
                     "required": ["query", "user_id"],
                 },

@@ -127,6 +127,8 @@ class Orchestrator:
             args = self._parse_args(call.arguments)
             if message.user_id is not None:
                 args["user_id"] = message.user_id
+            if call.name == "search_knowledge" and "query" not in args:
+                args["query"] = message.content
             if call.name == "execute_in_sandbox":
                 run_id = uuid.uuid4().hex
                 task = args.get("task") or args.get("description") or args.get("query")
