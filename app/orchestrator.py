@@ -349,6 +349,11 @@ class Orchestrator:
                     or action.get("name")
                 )
                 params = action.get("parameters") or action.get("params") or action.get("arguments") or {}
+            if isinstance(params, str):
+                try:
+                    params = json.loads(params)
+                except Exception:
+                    params = {}
             if name:
                 tool_calls.append(
                     SimpleNamespace(name=name, arguments=self._normalize_params(params))
